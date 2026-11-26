@@ -1,0 +1,16 @@
+[package]
+name = "photo-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+iced = { version = "0.13.1", default-features = false, features = ["tiny-skia", "image-without-codecs", "tokio", "auto-detect-theme"] }
+rfd = "0.15"
+tokio = { version = "1", features = ["rt-multi-thread"] }
+image.workspace = true
+photo-core.workspace = true
+photo-lab.workspace = true
+serde.workspace = true
+serde_json.workspace = true

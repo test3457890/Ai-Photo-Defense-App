@@ -1,0 +1,5 @@
+/target/
+/exports/
+/models/
+*.tmp
+*.sqlite*
