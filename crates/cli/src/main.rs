@@ -138,6 +138,41 @@ enum Command {
     Forensics { input: PathBuf },
     /// Extract the embedded camera preview from a RAW file as a new JPEG (no RAW development).
     RawPreview { input: PathBuf, output: PathBuf },
+    /// Identify any media file by content and list its tracks, codecs and privacy metadata.
+    MediaInspect { input: PathBuf },
+    /// Remove privacy metadata from MP4/MOV/M4A/3GP without re-encoding; verifies every chunk.
+    StripVideo {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Loudness (EBU R128), true peak, clipping, silence and spectrum summary of an audio file.
+    AudioAnalyze { input: PathBuf },
+    /// Compare two recordings sample by sample (SNR, segmental SNR, length).
+    AudioCompare {
+        original: PathBuf,
+        processed: PathBuf,
+    },
+    /// Export audio as metadata-free WAV, optionally muting or bleeping time ranges (seconds).
+    AudioExport {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Range to mute, e.g. 12.5-14 (repeatable).
+        #[arg(long)]
+        mute: Vec<String>,
+        /// Range to bleep, e.g. 30-31.2 (repeatable).
+        #[arg(long)]
+        bleep: Vec<String>,
+    },
+    /// Adversarial voice protection. Refuses: no validated voice model is installed.
+    AudioProtect { input: PathBuf },
+    /// Scan SRT/WebVTT subtitles for private information; optionally write a redacted copy.
+    Subtitles {
+        input: PathBuf,
+        #[arg(long)]
+        redact_to: Option<PathBuf>,
+    },
 }
 #[derive(clap::Args, Clone)]
 struct ProfileArgs {
@@ -565,6 +600,92 @@ fn main() -> Result<()> {
                 p.candidates
             );
         }
+        Command::MediaInspect { input } => {
+            let b = read_media(&input)?;
+            let det = photo_media::detect(&b);
+            let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if photo_media::detect::extension_mismatch(&det, ext) {
+                eprintln!(
+                    "Warning: the .{ext} extension does not match the detected {} content",
+                    det.container
+                );
+            }
+            let info = photo_media::inspect(&b)?;
+            println!("{}", serde_json::to_string_pretty(&info)?);
+        }
+        Command::StripVideo { input, output } => {
+            let b = read_media(&input)?;
+            let (out, report) = photo_media::mp4::strip(&b)?;
+            save_new(&output, &out)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::AudioAnalyze { input } => {
+            let mut a = photo_media::audio::analyze(&input)?;
+            a.waveform.clear();
+            a.spectrogram.clear();
+            println!("{}", serde_json::to_string_pretty(&a)?);
+        }
+        Command::AudioCompare {
+            original,
+            processed,
+        } => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&photo_media::audio::compare(&original, &processed)?)?
+            );
+        }
+        Command::AudioExport {
+            input,
+            output,
+            mute,
+            bleep,
+        } => {
+            let mut segs = vec![];
+            for (list, kind) in [
+                (&mute, photo_media::audio::RedactKind::Mute),
+                (&bleep, photo_media::audio::RedactKind::Bleep),
+            ] {
+                for r in list {
+                    let (a, b) = r.split_once('-').context("Ranges must look like 12.5-14")?;
+                    segs.push(photo_media::audio::Segment {
+                        start_s: a.trim().parse()?,
+                        end_s: b.trim().parse()?,
+                        kind,
+                    });
+                }
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&photo_media::audio::export_wav(
+                    &input, &output, &segs
+                )?)?
+            );
+        }
+        Command::AudioProtect { input: _ } => anyhow::bail!(
+            "No validated voice-protection model is installed. The audio protection engine refuses to run without one; no file was changed."
+        ),
+        Command::Subtitles { input, redact_to } => {
+            let b = read_media(&input)?;
+            let text = String::from_utf8_lossy(&b);
+            let cues = photo_media::subtitles::parse(&text)?;
+            let found = photo_media::subtitles::scan(&cues, &photo_privacy::Country::ALL);
+            println!("{}", serde_json::to_string_pretty(&found)?);
+            if let Some(out) = redact_to {
+                let flagged: Vec<usize> = found.iter().map(|f| f.cue).collect();
+                let vtt = photo_media::detect(&b).container == "WebVTT";
+                save_new(
+                    &out,
+                    photo_media::subtitles::write(&cues, &flagged, vtt).as_bytes(),
+                )?;
+                eprintln!(
+                    "Wrote redacted subtitles ({} cue(s) replaced)",
+                    flagged
+                        .iter()
+                        .collect::<std::collections::HashSet<_>>()
+                        .len()
+                );
+            }
+        }
         Command::Profiles { name } => match name {
             None => {
                 for p in photo_privacy::Profile::all() {
@@ -581,6 +702,24 @@ fn main() -> Result<()> {
         ),
     }
     Ok(())
+}
+/// Bounded read of a media file (regular files only).
+fn read_media(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let m = std::fs::symlink_metadata(path)?;
+    ensure!(
+        m.is_file() && !m.file_type().is_symlink(),
+        "Input must be a regular file"
+    );
+    ensure!(
+        m.len() <= 2 * 1024 * 1024 * 1024,
+        "File exceeds the 2 GiB inspection limit"
+    );
+    let mut b = vec![];
+    std::fs::File::open(path)?
+        .take(m.len() + 1)
+        .read_to_end(&mut b)?;
+    Ok(b)
 }
 fn export_one(input: &Path, dir: &Path, format: ExportFormat, q: u8) -> Result<PathBuf> {
     let p = load(input)?;

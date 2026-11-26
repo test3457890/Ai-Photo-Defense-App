@@ -12,7 +12,7 @@ photo-defense verify-model /path/to/model.safetensors /path/to/reviewed-manifest
 photo-defense experimental-clip photo.png /path/to/model.safetensors /path/to/reviewed-manifest.json --output experiment.png --epsilon 4 --steps 10
 ```
 
-`redistribution_approved` is currently a conservative gate required for use of the manifest. It does not cause redistribution. A future catalog must distinguish local-use approval from redistribution rights. Do not set it true merely because an artifact is downloadable. The shipped [manifest example](research/model-manifest.example.json) is deliberately not approved and cannot be used to claim successful verification.
+Manifest schema 2 separates `local_use_approved` (required to load the weights locally) from `redistribution_approved` and `commercial_use_permitted` (recorded for future installers; not needed locally). Do not set it true merely because an artifact is downloadable. The shipped [manifest example](research/model-manifest.example.json) is deliberately not approved and cannot be used to claim successful verification.
 
 Output is PNG with a JSON sidecar. Quantized samples are checked against the requested integer pixel budget. Reports include model and image hashes, loss trace, feature energy before and after, pixel quality and `ai_efficacy: not evaluated`. A model loss improvement is not a protection score. Runtime and memory requirements can be substantial on CPU. Cancellation is exposed through the engine SDK but not yet wired to CLI Ctrl+C; interrupting before publication produces no final image.
 

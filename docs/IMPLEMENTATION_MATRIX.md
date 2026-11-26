@@ -206,3 +206,45 @@ Increment started from `7b0e8b22b11b7191632974552298ec539e5ac51a` (Part 2 branch
 | Competitive benchmarking (29) | Blocked | Competing apps not available; no claim made |
 | Cross-platform runtime (30) | Incomplete | Windows only |
 | Signed releases | Blocked | No signing credentials |
+
+
+## Part 4
+
+Specification: [PART4_SPECIFICATION.md](PART4_SPECIFICATION.md) (verbatim). Status words as above; "Tested" means automated tests plus a manual run of the real Windows 10 app unless noted. Formats in detail: [FORMAT_COMPATIBILITY.md](FORMAT_COMPATIBILITY.md).
+
+| Requirement (spec section) | Status | Evidence / blocker |
+|---|---|---|
+| Audit of Parts 1 to 3 before expanding (3, 37A) | Done | Fixed: release desktop opened a console window; long text-field values painted over neighbouring widgets (iced 0.13 tiny-skia); folder import ignored media; manifest schema 2 separates local use from redistribution |
+| Content-based format detection, extension mismatch warning (9) | Tested | `photo_media::detect`, 40+ signatures; unit tests; GUI and CLI warn on mismatch |
+| Format compatibility matrix (9, 38) | Done | FORMAT_COMPATIBILITY.md |
+| Images: BMP and GIF import (6) | Tested | animated GIF flagged, first frame only |
+| Images: AVIF, HEIC/HEIF, JPEG XL, JPEG 2000, APNG, animated WebP, EXR, PSD, XCF, SVG (6) | Detect only | decoders not added (licence/patent review, untrusted-input surface) |
+| Video container inspection: MP4/MOV/3GP/M4A, MKV/WebM (7, 9) | Tested | tracks, codecs, size, fps, duration, language, metadata |
+| Video decode / preview / encode, codecs (7) | Blocked | no reviewed decoder; FilmCraft identified as candidate (research register) |
+| Audio decode, analysis, waveform, spectrogram (8, 15) | Tested | Symphonia; WAV, FLAC, MP3, AAC/M4A, ALAC, Ogg Vorbis |
+| AIFF, Opus, WMA, AC-3, AMR decode (8) | Blocked | not in Symphonia 0.5; detect only |
+| Large-file streaming (31) | Implemented | audio streamed (10 min 48 kHz stereo analysed in 3.4 s); MP4 rewrite holds the file in memory (1 GiB GUI limit, 2 GiB CLI) |
+| FilmCraft evaluation (10) | Done (desk review) | MIT OR Apache-2.0, own H.264 codec; not integrated (security/patent review pending) |
+| Repository and research investigation (11 to 14) | Partial | research/MULTIMEDIA_RESEARCH_REGISTER.md: 4 projects verified, the rest listed as not verified |
+| Audio protection engine (15) | Implemented, not usable | masked PGD engine with tests; refuses without a validated objective; no model installed |
+| Music and artist protection (16) | Blocked | same engine and profile; no model |
+| Video protection engine, temporal consistency (17) | Blocked | flicker metrics implemented (`temporal`); no frames, no model |
+| Combined audiovisual protection, A/V sync (18) | Blocked | depends on video decode/encode |
+| Protection profiles (19) | Implemented (audio engine) | Original Quality, Balanced/Voice, Maximum, Music |
+| Social media profiles (20) | Not started for media | photo profiles from Part 2 unchanged |
+| Quality preservation controls (21) | Partial | SNR floor, masking offset, no clipping in engine; loudness/peak analysis |
+| Comparison workspace: waveform, spectrogram, loudness-matched A/B (22) | Tested | desktop A/B at -23 LUFS; SNR, segmental SNR, length checks |
+| Multimedia Privacy Scan: metadata, subtitles (23) | Tested | MP4/MKV metadata; SRT/WebVTT text rules with cue times |
+| Spoken information redaction (23) | Partial | manual mute/bleep ranges, verified; automatic detection blocked (no local speech-to-text model) |
+| Moving-object redaction (23) | Blocked | needs decode, tracking and detection models |
+| Metadata removal (24) | Tested | audio via clean WAV export; MP4 family lossless; MKV not implemented |
+| Watermarking and provenance (25) | Not started | no C2PA signing credentials; no watermark |
+| Defense Lab for media, compression resilience (26, 27) | Not started | needs protection model and encoders |
+| Batch multimedia (28) | Partial | desktop imports folders of media; CLI commands per file; no batch media export yet |
+| GUI in all three modes (29) | Tested (Windows 10) | Essential list + side panel, Professional MEDIA library + viewer, Technical Format Inspection; screenshots `part4-*.png` |
+| 21-step pipeline (30) | Partial | steps 1-8, 11, 14, 17, 18, 21 for supported formats; protection, encode, watermark, credentials and A/V sync steps blocked |
+| Logging and diagnostics (32) | Tested | media events logged with codes; no file names or values |
+| Multimedia cybersecurity (33) | Tested | bounded parsers, node/depth caps, mutation tests, decoder panic containment (SECURITY_REVIEW.md) |
+| Cross-platform testing (34) | Incomplete | Windows 10 runtime; Linux/macOS compile in CI only |
+| Competitive benchmarking (35) | Blocked | no competing tools installed; no comparison claimed |
+| Releases (39) | Not done | PR opened for review; owner asked not to merge before review |

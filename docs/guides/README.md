@@ -49,3 +49,29 @@ Technical > Diagnostics Center: live sanitized log with level/component filters 
 ## Crash recovery
 
 The open session is autosaved every 60 seconds to a journal in the application data folder. If the app did not exit normally, the next start shows a banner offering to restore the autosaved work. Saved projects (`.apdproj`) are written atomically; the previous valid version becomes `.bak` plus up to five checkpoints, and a corrupt project opens from the last valid backup. Start with `--safe-mode` to skip autosave restore, the catalog and caches.
+
+## Audio, video and subtitles (Part 4)
+
+Add media the same way as photographs (Add folder, drop, or the Library path box). Files are
+sorted by their **content**, not their extension: photographs go to the collection, everything
+else to **Media** (Essential list, Professional Library > MEDIA, Technical > Format Inspection).
+
+- **Audio** (WAV, FLAC, MP3, AAC/M4A, ALAC, Ogg Vorbis): waveform, spectrogram, integrated
+  loudness, loudness range, true peak, clipping and silence. To hide spoken private information,
+  type a start and end time in seconds and press **Mute** or **Bleep** (1 kHz tone at -20 dB with
+  5 ms fades). **Export clean WAV** writes a new metadata-free WAV, reopens it
+  and checks that every sample outside your ranges is unchanged. **A: Original / B: Export** plays
+  the first two minutes of each version at the same loudness (-23 LUFS) for a fair comparison.
+  Spoken names and numbers are **not** found automatically: no local speech-to-text model is
+  installed. See [AUDIO_PROTECTION.md](AUDIO_PROTECTION.md).
+- **Video** (MP4, MOV, 3GP, M4A): tracks, codecs and privacy metadata (GPS, device, software,
+  dates, XMP, timed-metadata tracks). **Remove metadata (no re-encode)** writes a copy without
+  them; picture and sound are byte-identical. MKV/WebM are inspected only. Frames are not decoded,
+  so there is no video preview, redaction or protection yet. See
+  [VIDEO_PROTECTION.md](VIDEO_PROTECTION.md).
+- **Subtitles** (SRT, WebVTT): the Privacy Scan lists findings by cue and time; **Export redacted
+  subtitles** replaces flagged cues with `[redacted]` and keeps all timings.
+
+AI voice and video protection is shown as unavailable: no validated model is installed, so no
+adversarial change is made and none is claimed. Format support in detail:
+[../FORMAT_COMPATIBILITY.md](../FORMAT_COMPATIBILITY.md).

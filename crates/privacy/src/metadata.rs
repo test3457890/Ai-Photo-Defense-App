@@ -40,6 +40,14 @@ pub fn inspect(bytes: &[u8]) -> MetadataReport {
     } else if bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*") {
         r.container = "TIFF".into();
         tiff(bytes, &mut r);
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        r.container = "GIF".into();
+        gif(bytes, &mut r);
+    } else if bytes.starts_with(b"BM") && bytes.len() >= 14 {
+        r.container = "BMP".into();
+        // BMP has no metadata blocks; only trailing bytes beyond the declared size matter.
+        let declared = u32::from_le_bytes([bytes[2], bytes[3], bytes[4], bytes[5]]) as usize;
+        trailing(bytes, Some(declared.min(bytes.len())), &mut r);
     } else {
         r.container = "unknown".into();
         r.add(
@@ -414,6 +422,107 @@ fn webp(b: &[u8], r: &mut MetadataReport) {
     trailing(b, Some(end), r);
 }
 
+/// GIF: walks blocks to count frames and find comment, XMP and other application extensions.
+fn gif(b: &[u8], r: &mut MetadataReport) {
+    if b.len() < 13 {
+        r.add(
+            Category::UnexpectedData,
+            Evidence::Pattern,
+            "Truncated GIF header",
+        );
+        return;
+    }
+    let mut i = 13;
+    if b[10] & 0x80 != 0 {
+        i += 3 * (1usize << ((b[10] & 7) + 1));
+    }
+    // Skips a chain of data sub-blocks; returns the index after the terminator.
+    let skip = |mut i: usize| -> Option<usize> {
+        loop {
+            let n = *b.get(i)? as usize;
+            i += 1;
+            if n == 0 {
+                return Some(i);
+            }
+            i = i.checked_add(n)?;
+        }
+    };
+    let (mut frames, mut guard) = (0usize, 0usize);
+    let mut end = None;
+    while i < b.len() && guard < 100_000 {
+        guard += 1;
+        match b[i] {
+            0x3b => {
+                end = Some(i + 1);
+                break;
+            }
+            0x2c => {
+                frames += 1;
+                let Some(flags) = b.get(i + 9) else { break };
+                i += 10;
+                if flags & 0x80 != 0 {
+                    i += 3 * (1usize << ((flags & 7) + 1));
+                }
+                i += 1; // LZW minimum code size
+                let Some(n) = skip(i) else { break };
+                i = n;
+            }
+            0x21 => {
+                let label = b.get(i + 1).copied().unwrap_or(0);
+                if label == 0xfe {
+                    r.add(
+                        Category::Comment,
+                        Evidence::Confirmed,
+                        "GIF comment extension",
+                    );
+                    if let Some(len) = b.get(i + 2) {
+                        let s = i + 3;
+                        r.text_values.push(
+                            String::from_utf8_lossy(
+                                &b[s.min(b.len())..(s + *len as usize).min(b.len())],
+                            )
+                            .into_owned(),
+                        );
+                    }
+                } else if label == 0xff {
+                    let id = b.get(i + 3..i + 14).unwrap_or_default();
+                    if id.starts_with(b"XMP Data") {
+                        r.add(
+                            Category::XmpMetadata,
+                            Evidence::Confirmed,
+                            "GIF XMP application block",
+                        );
+                    } else if !id.starts_with(b"NETSCAPE") && !id.starts_with(b"ANIMEXTS") {
+                        r.add(
+                            Category::OtherMetadata,
+                            Evidence::Confirmed,
+                            "GIF application extension",
+                        );
+                    }
+                }
+                let Some(n) = skip(i + 2) else { break };
+                i = n;
+            }
+            _ => {
+                r.add(
+                    Category::UnexpectedData,
+                    Evidence::Pattern,
+                    "Malformed GIF block structure",
+                );
+                return;
+            }
+        }
+    }
+    if frames > 1 {
+        r.add(
+            Category::HiddenLayers,
+            Evidence::Confirmed,
+            format!("Animated GIF: {frames} frames (only the first is processed as a photograph)"),
+        );
+    }
+    trailing(b, end, r);
+}
+
 fn tiff(b: &[u8], r: &mut MetadataReport) {
     let le = b[0] == b'I';
     let u16_at = |i: usize| -> Option<usize> {
@@ -581,5 +690,76 @@ mod tests {
         ] {
             let _ = inspect(&v);
         }
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+    fn encode(f: image::ImageFormat) -> Vec<u8> {
+        let mut c = std::io::Cursor::new(vec![]);
+        image::DynamicImage::new_rgb8(6, 4)
+            .write_to(&mut c, f)
+            .unwrap();
+        c.into_inner()
+    }
+    #[test]
+    fn gif_and_bmp_clean_and_animated() {
+        assert!(
+            inspect(&encode(image::ImageFormat::Bmp))
+                .findings
+                .is_empty()
+        );
+        let gif = encode(image::ImageFormat::Gif);
+        assert!(
+            inspect(&gif).findings.is_empty(),
+            "{:?}",
+            inspect(&gif).findings
+        );
+        // Duplicate the single frame (between header/palette and trailer) to make an animation.
+        let start = gif.windows(1).position(|w| w[0] == 0x2c).unwrap();
+        let mut anim = gif[..gif.len() - 1].to_vec();
+        anim.extend_from_slice(&gif[start..gif.len() - 1]);
+        anim.extend_from_slice(&[0x21, 0xfe, 4, b'n', b'o', b't', b'e', 0, 0x3b]);
+        let c: Vec<_> = inspect(&anim).findings.iter().map(|f| f.category).collect();
+        assert!(
+            c.contains(&Category::HiddenLayers) && c.contains(&Category::Comment),
+            "{c:?}"
+        );
+    }
+    /// Deterministic mutation testing: thousands of corrupted variants must never panic.
+    #[test]
+    fn mutated_inputs_never_panic() {
+        let seeds = [
+            encode(image::ImageFormat::Png),
+            encode(image::ImageFormat::Jpeg),
+            encode(image::ImageFormat::Gif),
+            encode(image::ImageFormat::WebP),
+            encode(image::ImageFormat::Tiff),
+        ];
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for seed in &seeds {
+            for _ in 0..400 {
+                let mut v = seed.clone();
+                for _ in 0..(next() % 8 + 1) {
+                    let i = (next() as usize) % v.len();
+                    v[i] = next() as u8;
+                }
+                if next() % 4 == 0 {
+                    v.truncate((next() as usize) % v.len());
+                }
+                let _ = inspect(&v);
+                let _ = photo_core_decode(&v);
+            }
+        }
+    }
+    fn photo_core_decode(v: &[u8]) -> bool {
+        image::load_from_memory(v).is_ok()
     }
 }

@@ -1,12 +1,14 @@
 # AI Photo Defense
 
-Offline, Rust-native photography workstation for privacy: professional editing and colour correction, local Privacy Scan, permanent redaction, verified export, diagnostics and crash recovery, plus an experimental adversarial-defense research bench. Development preview, not a validated protection product.
+Offline, Rust-native privacy workstation for photographs and other finished media: professional photo editing and colour correction, local Privacy Scan, permanent redaction, verified export, audio/video/subtitle metadata inspection and removal, spoken-content muting, diagnostics and crash recovery, plus an experimental adversarial-defense research bench. Development preview, not a validated protection product.
 
 The desktop application imports photographs and folders, scans them locally for privacy findings (metadata, QR codes and barcodes, credentials and personal data in decoded text), edits and redacts them non-destructively, and exports flattened, metadata-free copies that are reopened and verified before they are saved. A separate optional CLI experiment optimizes a real CLIP image encoder using input gradients. No defense against editing, face swapping, identity cloning, recognition training or generative training has yet been independently demonstrated by this project. No photograph can be guaranteed immune to manipulation.
 
 ## Working today
 
-Part 3 (this branch) adds: a redesigned native interface with three distinct modes (Essential processing list, Professional dockable workspace with library, viewer, filmstrip and inspector, Technical diagnostics/performance/forensics pages); Color Studio (linear-light white balance and exposure, tone, curves, HSL, grading, LUT import/export, presets, histogram and clipping warnings); adjustment layers with gradient, radial and selection masks, blend modes and opacity; perspective, lens and canvas corrections; RAW files via their embedded camera preview; SQLite Media Manager; structured, privacy-sanitised local logging; autosave and crash recovery; high-assurance export review; read-only forensic inspection. See [HANDOFF.md](HANDOFF.md) for exactly what was verified.
+Part 4 (this branch, 0.4.0) adds a multimedia privacy foundation, deliberately not a video editor: content-based detection of about 45 formats; MP4/MOV/3GP/M4A and MKV/WebM inspection (tracks, codecs, GPS, device and other metadata); lossless MP4-family metadata removal with chunk-level verification; streamed audio decoding (WAV, FLAC, MP3, AAC/M4A, ALAC, Ogg Vorbis) with loudness, true peak, waveform and spectrogram; mute/bleep redaction with verified WAV export and loudness-matched A/B listening; SRT/WebVTT Privacy Scan and redaction; BMP and GIF import. Video decoding, AI voice/video protection and speech-to-text are **not** available; the audio protection engine exists but refuses to run without a validated model. Details: [format compatibility](docs/FORMAT_COMPATIBILITY.md), [audio](docs/guides/AUDIO_PROTECTION.md) and [video](docs/guides/VIDEO_PROTECTION.md) guides, [research register](docs/research/MULTIMEDIA_RESEARCH_REGISTER.md).
+
+Part 3 added: a redesigned native interface with three distinct modes (Essential processing list, Professional dockable workspace with library, viewer, filmstrip and inspector, Technical diagnostics/performance/forensics pages); Color Studio (linear-light white balance and exposure, tone, curves, HSL, grading, LUT import/export, presets, histogram and clipping warnings); adjustment layers with gradient, radial and selection masks, blend modes and opacity; perspective, lens and canvas corrections; RAW files via their embedded camera preview; SQLite Media Manager; structured, privacy-sanitised local logging; autosave and crash recovery; high-assurance export review; read-only forensic inspection. See [HANDOFF.md](HANDOFF.md) for exactly what was verified.
 
 
 - Essential, Professional and Technical modes share one collection and one edit stack per photograph. Workspaces: Batch Export, Privacy Scan, Edit and Redact, AI Defense (status), Protection History, Defense Lab, Model Library, Settings.
@@ -31,7 +33,7 @@ Part 3 (this branch) adds: a redesigned native interface with three distinct mod
 
 Export removes metadata and applies your edits and redactions. It does not run the experimental CLI defense. No validated defense model is installed. Face, person, object, document, screen and licence-plate detection and OCR of text in the pixels are **not available** until verified local models are licensed and integrated; every scan lists these as not examined. Automated scanning never guarantees privacy. Quick/Balanced/Maximum protection presets are not enabled because their effectiveness has not been measured. Watermarking, C2PA, model downloads, signed updates, GPU inference, folder monitoring, SQLite history, full docking and persisted collections remain unfinished. Technical mode measures image transformations; it does not run face swaps or AI editors.
 
-Only 8-bit images are accepted. Color management is pending: dropping an ICC profile can change appearance, especially for wide-gamut photographs. Work on copies and inspect exported colors before sharing. Multi-page TIFF and animated inputs export only the first image/frame. JPEG rejects transparency. The transformation lab currently requires opaque images for JPEG tests. RAW and HEIC are not supported.
+Only 8-bit images are accepted. Color management is pending: dropping an ICC profile can change appearance, especially for wide-gamut photographs. Work on copies and inspect exported colors before sharing. Multi-page TIFF and animated inputs export only the first image/frame. JPEG rejects transparency. The transformation lab currently requires opaque images for JPEG tests. RAW files open through their embedded camera preview only (no RAW development). HEIC/HEIF and AVIF are detected but not decoded.
 
 ## Build and run
 
@@ -39,7 +41,7 @@ Install [Rust](https://rustup.rs/). The repository pins Rust 1.100.0 and commits
 
 ```sh
 cargo run --locked -p photo-desktop
-cargo run --locked -p photo-desktop -- --workspace professional photo.png
+cargo run --locked -p photo-desktop -- --mode professional photo.png
 cargo run --locked -p photo-cli -- inspect photo.png
 ```
 
@@ -54,6 +56,10 @@ cargo run --locked -p photo-cli -- scan photo.png --profile "Cybersecurity"
 cargo run --locked -p photo-cli -- process photo.png -o exports --aspect 4:5 --fit 1080x1350 --redact 40,60,200,80 --auto-redact
 cargo run --locked -p photo-cli -- batch ./photos -o exports --recursive --profile "Home Privacy"
 cargo run --locked -p photo-cli -- profiles "Travel" > travel.json
+cargo run --locked -p photo-cli -- media-inspect clip.mov
+cargo run --locked -p photo-cli -- strip-video clip.mov -o exports/clip-clean.mov
+cargo run --locked -p photo-cli -- audio-export talk.mp3 -o exports/talk.wav --bleep 12.5-14
+cargo run --locked -p photo-cli -- subtitles episode.srt --redact-to exports/episode.srt
 ```
 
 [User guide](docs/USER_GUIDE.md) explains workspaces, shortcuts, limits and report interpretation. [Experimental CLIP guide](docs/EXPERIMENTAL_CLIP.md) explains how to build the optional model experiment. It is not a production protection preset.
@@ -89,7 +95,7 @@ See [testing](docs/TESTING.md), [security review](docs/SECURITY_REVIEW.md) and [
 
 - [Master specification](docs/MASTER_SPECIFICATION.md), [Part 3 specification](docs/PART3_SPECIFICATION.md) and [implementation matrix](docs/IMPLEMENTATION_MATRIX.md)
 - [User guides](docs/guides/README.md), [design evaluation](docs/design/PART3_DESIGN.md), [benchmarks](docs/BENCHMARKS.md)
-- [Camera compatibility](docs/CAMERA_COMPATIBILITY.md), [hardware compatibility](docs/HARDWARE_COMPATIBILITY.md), [Part 4 video roadmap](docs/ROADMAP_PART4_VIDEO.md)
+- [Camera compatibility](docs/CAMERA_COMPATIBILITY.md), [hardware compatibility](docs/HARDWARE_COMPATIBILITY.md), [Part 4 specification](docs/PART4_SPECIFICATION.md), [archived video-editor concept](docs/archive/DEFERRED_VIDEO_EDITOR_CONCEPT.md)
 - [Development handoff](HANDOFF.md)
 - [Architecture and SDK](docs/ARCHITECTURE.md)
 - [Model licensing register](docs/research/MODEL_LICENSES.md)

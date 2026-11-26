@@ -92,9 +92,14 @@ pub fn decode_bounded(bytes: &[u8]) -> Result<(DynamicImage, ImageFormat)> {
     ensure!(
         matches!(
             format,
-            ImageFormat::Jpeg | ImageFormat::Png | ImageFormat::WebP | ImageFormat::Tiff
+            ImageFormat::Jpeg
+                | ImageFormat::Png
+                | ImageFormat::WebP
+                | ImageFormat::Tiff
+                | ImageFormat::Bmp
+                | ImageFormat::Gif
         ),
-        "Only JPEG, PNG, WebP and TIFF supported"
+        "Only JPEG, PNG, WebP, TIFF, BMP and GIF are supported"
     );
     let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
     let mut limits = image::Limits::default();

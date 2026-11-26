@@ -169,13 +169,15 @@ pub enum TechPage {
     Lab,
     Models,
     History,
+    Formats,
 }
 impl TechPage {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Diagnostics,
         Self::Performance,
         Self::Validation,
         Self::Forensics,
+        Self::Formats,
         Self::Lab,
         Self::Models,
         Self::History,
@@ -189,6 +191,7 @@ impl TechPage {
             Self::Lab => "Defense Lab",
             Self::Models => "Model Library",
             Self::History => "Processing History",
+            Self::Formats => "Format Inspection",
         }
     }
 }
@@ -302,6 +305,60 @@ impl std::fmt::Debug for Imported {
     }
 }
 
+/// A non-photo media file (audio, video or subtitles).
+pub struct MediaEntry {
+    pub path: PathBuf,
+    pub name: String,
+    pub bytes: u64,
+    pub info: Option<photo_media::MediaInfo>,
+    pub mismatch: bool,
+    pub analysis: Option<photo_media::audio::Analysis>,
+    pub wave: Option<image::Handle>,
+    pub spectro: Option<image::Handle>,
+    pub segments: Vec<photo_media::audio::Segment>,
+    pub status: String,
+    pub output: Option<PathBuf>,
+    pub report: Option<String>,
+    pub comparison: Option<photo_media::audio::Comparison>,
+    pub out_lufs: Option<f64>,
+}
+impl MediaEntry {
+    pub fn kind(&self) -> photo_media::MediaKind {
+        self.info
+            .as_ref()
+            .map(|i| i.kind)
+            .unwrap_or(photo_media::MediaKind::Unknown)
+    }
+}
+
+#[derive(Clone)]
+pub struct MediaLoad {
+    info: Option<photo_media::MediaInfo>,
+    mismatch: bool,
+    bytes: u64,
+    analysis: Option<photo_media::audio::Analysis>,
+    wave: Option<image::Handle>,
+    spectro: Option<image::Handle>,
+    error: Option<String>,
+}
+impl std::fmt::Debug for MediaLoad {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MediaLoad")
+    }
+}
+#[derive(Clone)]
+pub struct Pcm(pub Arc<Vec<f32>>, pub u16, pub u32);
+impl std::fmt::Debug for Pcm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Pcm({} samples)", self.0.len())
+    }
+}
+pub struct Player {
+    _stream: rodio::OutputStream,
+    handle: rodio::OutputStreamHandle,
+    sink: Option<rodio::Sink>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Perf {
     pub cpu: Option<f32>,
@@ -384,7 +441,10 @@ pub enum Message {
     HighAssurance(bool),
     AutoRedact(bool),
     EssentialAspect(Option<AspectRatio>),
-    Export { accept_unresolved: bool, all: bool },
+    Export {
+        accept_unresolved: bool,
+        all: bool,
+    },
     Exported(Vec<(usize, Result<ExportState, String>)>),
     Cancel,
     SaveProject,
@@ -415,6 +475,28 @@ pub enum Message {
     ForensicsDone(Result<Box<photo_privacy::forensics::ForensicReport>, String>),
     Cache(bool),
     ClearCache,
+    MediaLoaded(PathBuf, Box<MediaLoad>),
+    SelectMedia(usize),
+    SegStart(String),
+    SegEnd(String),
+    AddSegment(photo_media::audio::RedactKind),
+    RemoveSegment(usize),
+    MediaExport,
+    MediaExported(
+        usize,
+        Result<
+            (
+                PathBuf,
+                String,
+                Option<photo_media::audio::Comparison>,
+                Option<f64>,
+            ),
+            String,
+        >,
+    ),
+    Play(usize, bool),
+    PlayReady(Result<Pcm, String>, f32),
+    StopAudio,
     PaneResized(pane_grid::ResizeEvent),
     PaneDragged(pane_grid::DragEvent),
     PaneMaximize(Pane),
@@ -485,6 +567,13 @@ pub struct App {
     pub forensics: Option<Box<photo_privacy::forensics::ForensicReport>>,
     pub perf: Perf,
     pub sys: Option<sysinfo::System>,
+    pub media: Vec<MediaEntry>,
+    pub selected_media: Option<usize>,
+    pub focus_media: bool,
+    pub seg_start: String,
+    pub seg_end: String,
+    pub player: Option<Player>,
+    pub playing: Option<(usize, bool)>,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -637,6 +726,199 @@ fn set_field(a: &mut Adjustments, f: Field, band: usize, v: f32) {
         Field::LutStrength => a.lut_strength = v.clamp(0., 1.),
         Field::Opacity => {}
     }
+}
+
+/// Background media inspection: bounded read, content detection, structure, audio analysis.
+fn load_media(path: &Path) -> MediaLoad {
+    let mut l = MediaLoad {
+        info: None,
+        mismatch: false,
+        bytes: 0,
+        analysis: None,
+        wave: None,
+        spectro: None,
+        error: None,
+    };
+    let r = (|| -> anyhow::Result<()> {
+        let meta = std::fs::symlink_metadata(path)?;
+        anyhow::ensure!(
+            meta.is_file() && !meta.file_type().is_symlink(),
+            "Not a regular file"
+        );
+        l.bytes = meta.len();
+        let mut head = vec![0u8; 512];
+        let n = std::io::Read::read(&mut std::fs::File::open(path)?, &mut head)?;
+        let det = photo_media::detect(&head[..n]);
+        l.mismatch = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| photo_media::detect::extension_mismatch(&det, e));
+        if meta.len() <= 1 << 30 {
+            let bytes = std::fs::read(path)?;
+            l.info = Some(photo_media::inspect(&bytes)?);
+        } else {
+            l.info = Some(photo_media::MediaInfo {
+                kind: det.kind,
+                container: det.container.into(),
+                duration_s: None,
+                tracks: vec![],
+                findings: vec![],
+                warnings: vec![
+                    "Larger than 1 GiB: structure not inspected in the desktop app".into(),
+                ],
+            });
+        }
+        if det.kind == photo_media::MediaKind::Audio {
+            let a = photo_media::audio::analyze(path)?;
+            l.wave = Some(handle(&crate::widgets::waveform_image(
+                &a.waveform,
+                1200,
+                120,
+            )));
+            l.spectro = Some(handle(&crate::widgets::spectrogram_image(
+                &a.spectrogram,
+                1200,
+                128,
+            )));
+            l.analysis = Some(a);
+        }
+        Ok(())
+    })();
+    if let Err(e) = r {
+        l.error = Some(format!("{e:#}"));
+    }
+    l
+}
+
+fn unique_out(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+    let stem: String = stem
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(80)
+        .collect();
+    (1..1000)
+        .map(|n| {
+            dir.join(if n == 1 {
+                format!("{stem}-private.{ext}")
+            } else {
+                format!("{stem}-private-{n}.{ext}")
+            })
+        })
+        .find(|p| !p.exists())
+        .unwrap_or_else(|| dir.join(format!("{stem}-private-x.{ext}")))
+}
+
+/// Exports a media file through the matching verified path. Never overwrites.
+fn export_media(
+    path: &Path,
+    dir: &Path,
+    kind: photo_media::MediaKind,
+    container: &str,
+    segs: &[photo_media::audio::Segment],
+) -> anyhow::Result<(
+    PathBuf,
+    String,
+    Option<photo_media::audio::Comparison>,
+    Option<f64>,
+)> {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("media");
+    match kind {
+        photo_media::MediaKind::Audio => {
+            let out = unique_out(dir, stem, "wav");
+            let r = photo_media::audio::export_wav(path, &out, segs)?;
+            let cmp = photo_media::audio::compare(path, &out).ok();
+            let lufs = photo_media::audio::analyze(&out)
+                .ok()
+                .and_then(|a| a.integrated_lufs);
+            Ok((out, serde_json::to_string_pretty(&r)?, cmp, lufs))
+        }
+        photo_media::MediaKind::Video if matches!(container, "MP4" | "MOV" | "3GP" | "M4A") => {
+            anyhow::ensure!(
+                segs.is_empty(),
+                "Audio segment redaction inside video files is not implemented (no video encoder); export the audio separately"
+            );
+            let bytes = std::fs::read(path)?;
+            let (out_bytes, r) = photo_media::mp4::strip(&bytes)?;
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("mp4")
+                .to_ascii_lowercase();
+            let saved = photo_core::save_unique(
+                dir,
+                &format!(
+                    "{}-private",
+                    stem.chars()
+                        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                            c
+                        } else {
+                            '_'
+                        })
+                        .take(80)
+                        .collect::<String>()
+                ),
+                &ext,
+                &out_bytes,
+            )?;
+            Ok((saved, serde_json::to_string_pretty(&r)?, None, None))
+        }
+        photo_media::MediaKind::Subtitle => {
+            let text = std::fs::read_to_string(path)?;
+            let cues = photo_media::subtitles::parse(&text)?;
+            let found = photo_media::subtitles::scan(&cues, &photo_privacy::Country::ALL);
+            let flagged: Vec<usize> = found.iter().map(|f| f.cue).collect();
+            let vtt = container == "WebVTT";
+            let out = photo_core::save_unique(
+                dir,
+                &format!("{stem}-private"),
+                if vtt { "vtt" } else { "srt" },
+                photo_media::subtitles::write(&cues, &flagged, vtt).as_bytes(),
+            )?;
+            Ok((
+                out,
+                format!(
+                    "{} cue(s) redacted; timestamps of findings:\n{}",
+                    flagged.len(),
+                    found
+                        .iter()
+                        .map(|f| format!(
+                            "{:.1}s {:?}",
+                            f.start_ms as f64 / 1000.,
+                            f.finding.category
+                        ))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ),
+                None,
+                None,
+            ))
+        }
+        _ => anyhow::bail!(
+            "Export is not available for {container}: protection and re-encoding of this format are not implemented"
+        ),
+    }
+}
+
+/// Decodes up to two minutes for preview playback.
+fn preview_pcm(path: &Path) -> anyhow::Result<Pcm> {
+    let mut d = photo_media::audio::Decoder::open(path)?;
+    let (ch, rate) = (d.info.channels, d.info.sample_rate);
+    let limit = rate as usize * ch * 120;
+    let mut v = Vec::new();
+    while v.len() < limit {
+        match d.next_block()? {
+            Some(b) => v.extend(b),
+            None => break,
+        }
+    }
+    v.truncate(limit);
+    Ok(Pcm(Arc::new(v), ch as u16, rate))
 }
 
 /// Output dimensions of an edit stack, derived from geometry operations.
@@ -815,6 +1097,13 @@ impl App {
                 ..Default::default()
             },
             sys,
+            media: vec![],
+            selected_media: None,
+            focus_media: false,
+            seg_start: String::new(),
+            seg_end: String::new(),
+            player: None,
+            playing: None,
         };
         app.refresh_library();
         app
@@ -1109,16 +1398,20 @@ impl App {
             Message::InputPath(p) => self.input_path = p,
             Message::OutputDir(p) => self.output_dir = p,
             Message::ImportPath if !self.input_path.trim().is_empty() => {
-                return self.update(Message::Picked(vec![PathBuf::from(self.input_path.trim())]));
+                let path = PathBuf::from(std::mem::take(&mut self.input_path).trim());
+                return self.update(Message::Picked(vec![path]));
             }
             Message::OpenDialog => {
                 self.menu = None;
                 let mut exts = vec!["jpg", "jpeg", "png", "webp", "tif", "tiff"];
                 exts.extend(photo_core::raw::EXTENSIONS);
+                exts.extend(["bmp", "gif"]);
+                let media = photo_pipeline::batch::MEDIA_EXTENSIONS;
                 return Task::perform(
                     async move {
                         rfd::AsyncFileDialog::new()
                             .add_filter("Photographs", &exts)
+                            .add_filter("Audio, video and subtitles", &media)
                             .pick_files()
                             .await
                             .map(|v| v.into_iter().map(|f| f.path().to_path_buf()).collect())
@@ -1148,6 +1441,7 @@ impl App {
                 let opts = photo_pipeline::batch::CollectOptions {
                     recursive: true,
                     max_files: QUEUE_LIMIT,
+                    include_media: true,
                     ..Default::default()
                 };
                 let (files, skipped) = match photo_pipeline::batch::collect(&paths, &opts) {
@@ -1165,8 +1459,64 @@ impl App {
                 };
                 let files: Vec<PathBuf> = files
                     .into_iter()
-                    .filter(|f| !self.entries.iter().any(|e| &e.path == f))
+                    .filter(|f| {
+                        !self.entries.iter().any(|e| &e.path == f)
+                            && !self.media.iter().any(|m| &m.path == f)
+                    })
                     .collect();
+                // Route by content, not extension: photographs go to the photo collection.
+                let (files, media): (Vec<PathBuf>, Vec<PathBuf>) =
+                    files.into_iter().partition(|f| {
+                        let mut head = [0u8; 512];
+                        let n = std::fs::File::open(f)
+                            .and_then(|mut h| std::io::Read::read(&mut h, &mut head))
+                            .unwrap_or(0);
+                        let d = photo_media::detect(&head[..n]);
+                        matches!(
+                            d.kind,
+                            photo_media::MediaKind::Image | photo_media::MediaKind::RawPhoto
+                        ) || d.container == "GIF"
+                            || d.kind == photo_media::MediaKind::Unknown
+                    });
+                let media_tasks: Vec<Task<Message>> = media
+                    .into_iter()
+                    .map(|path| {
+                        self.media.push(MediaEntry {
+                            name: short(&path),
+                            path: path.clone(),
+                            bytes: 0,
+                            info: None,
+                            mismatch: false,
+                            analysis: None,
+                            wave: None,
+                            spectro: None,
+                            segments: vec![],
+                            status: "Inspecting".into(),
+                            output: None,
+                            report: None,
+                            comparison: None,
+                            out_lufs: None,
+                        });
+                        Task::perform(
+                            async move {
+                                tokio::task::spawn_blocking(move || {
+                                    (path.clone(), Box::new(load_media(&path)))
+                                })
+                                .await
+                                .expect("join")
+                            },
+                            |(p, l)| Message::MediaLoaded(p, l),
+                        )
+                    })
+                    .collect();
+                if files.is_empty() {
+                    if self.selected_media.is_none() && !self.media.is_empty() {
+                        self.selected_media = Some(0);
+                        self.focus_media = true;
+                    }
+                    return Task::batch(media_tasks);
+                }
+                let media_batch = Task::batch(media_tasks);
                 if self.entries.len() + files.len() > QUEUE_LIMIT {
                     self.note(format!("The collection is limited to {QUEUE_LIMIT} photographs; use the CLI batch command for larger folders."));
                     return Task::none();
@@ -1224,7 +1574,8 @@ impl App {
                         .unwrap_or_else(|e| (Err(e.to_string()), vec![]))
                     },
                     |(r, errs)| Message::Imported(r, errs),
-                );
+                )
+                .chain(media_batch);
             }
             Message::Imported(r, errors) => {
                 self.busy = None;
@@ -1297,6 +1648,7 @@ impl App {
             }
             Message::Select(i) if i < self.entries.len() => {
                 self.selected = Some(i);
+                self.focus_media = false;
                 self.active_layer = None;
                 self.focused_finding = None;
                 self.selection = None;
@@ -2197,6 +2549,208 @@ impl App {
                     Ok(n) => self.note(format!("Overwrote and deleted {n} cached thumbnail(s).")),
                     Err(e) => self.note(format!("{e:#}")),
                 }
+            }
+            Message::MediaLoaded(path, l) => {
+                if let Some(m) = self.media.iter_mut().find(|m| m.path == path) {
+                    m.bytes = l.bytes;
+                    m.mismatch = l.mismatch;
+                    m.status = match (&l.error, &l.info) {
+                        (Some(e), _) => format!("Error: {e}"),
+                        (None, Some(i)) if i.findings.is_empty() => "Inspected".into(),
+                        (None, Some(i)) => format!("{} privacy finding(s)", i.findings.len()),
+                        _ => "Inspected".into(),
+                    };
+                    if let Some(e) = &l.error {
+                        photo_log::warn(Component::Decode, Code::DecodeFailed, e);
+                    }
+                    if l.error.is_none() {
+                        photo_log::event(
+                            Level::Info,
+                            Component::Decode,
+                            Code::Other,
+                            "media inspected",
+                        )
+                        .emit();
+                    }
+                    m.info = l.info;
+                    m.analysis = l.analysis;
+                    m.wave = l.wave;
+                    m.spectro = l.spectro;
+                }
+                if self.selected_media.is_none() && !self.media.is_empty() {
+                    self.selected_media = Some(0);
+                }
+            }
+            Message::SelectMedia(i) if i < self.media.len() => {
+                self.selected_media = Some(i);
+                self.focus_media = true;
+            }
+            Message::SegStart(v) => {
+                self.seg_start = v
+                    .chars()
+                    .filter(|c| c.is_ascii_digit() || *c == '.')
+                    .take(12)
+                    .collect()
+            }
+            Message::SegEnd(v) => {
+                self.seg_end = v
+                    .chars()
+                    .filter(|c| c.is_ascii_digit() || *c == '.')
+                    .take(12)
+                    .collect()
+            }
+            Message::AddSegment(kind) => {
+                let (a, b) = (self.seg_start.parse::<f64>(), self.seg_end.parse::<f64>());
+                match (a, b, self.selected_media) {
+                    (Ok(a), Ok(b), Some(i)) if b > a && a >= 0. => {
+                        self.media[i].segments.push(photo_media::audio::Segment {
+                            start_s: a,
+                            end_s: b,
+                            kind,
+                        });
+                        self.media[i].output = None;
+                        self.seg_start.clear();
+                        self.seg_end.clear();
+                    }
+                    _ => self.note("Enter a start and end time in seconds (end after start)."),
+                }
+            }
+            Message::RemoveSegment(k) => {
+                if let Some(i) = self.selected_media
+                    && k < self.media[i].segments.len()
+                {
+                    self.media[i].segments.remove(k);
+                }
+            }
+            Message::MediaExport => {
+                let Some(i) = self.selected_media else {
+                    return Task::none();
+                };
+                let dir = PathBuf::from(self.output_dir.trim());
+                if self.output_dir.trim().is_empty() || !dir.is_dir() {
+                    self.note("Choose an existing output folder first.");
+                    return self.update(Message::BrowseOutput);
+                }
+                let m = &self.media[i];
+                let (path, segs, kind, container) = (
+                    m.path.clone(),
+                    m.segments.clone(),
+                    m.kind(),
+                    m.info
+                        .as_ref()
+                        .map(|i| i.container.clone())
+                        .unwrap_or_default(),
+                );
+                self.media[i].status = "Exporting".into();
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            export_media(&path, &dir, kind, &container, &segs)
+                                .map_err(|e| format!("{e:#}"))
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    move |r| Message::MediaExported(i, r),
+                );
+            }
+            Message::MediaExported(i, r) => {
+                if let Some(m) = self.media.get_mut(i) {
+                    match r {
+                        Ok((p, report, cmp, lufs)) => {
+                            m.status = "Exported, verified".into();
+                            m.output = Some(p);
+                            m.report = Some(report);
+                            m.comparison = cmp;
+                            m.out_lufs = lufs;
+                        }
+                        Err(e) => {
+                            photo_log::error(Component::Export, Code::ExportFailed, &e);
+                            m.status = format!("Export failed: {e}");
+                        }
+                    }
+                }
+            }
+            Message::Play(i, processed) => {
+                let Some(m) = self.media.get(i) else {
+                    return Task::none();
+                };
+                let path = if processed {
+                    m.output.clone()
+                } else {
+                    Some(m.path.clone())
+                };
+                let Some(path) = path else {
+                    return Task::none();
+                };
+                // Loudness-matched comparison: both versions are played at -23 LUFS.
+                let lufs = if processed {
+                    m.out_lufs
+                } else {
+                    m.analysis.as_ref().and_then(|a| a.integrated_lufs)
+                };
+                let gain = lufs
+                    .map(|l| 10f64.powf((-23. - l) / 20.).clamp(0.05, 4.) as f32)
+                    .unwrap_or(1.);
+                self.playing = Some((i, processed));
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            preview_pcm(&path).map_err(|e| format!("{e:#}"))
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    move |r| Message::PlayReady(r, gain),
+                );
+            }
+            Message::PlayReady(r, gain) => {
+                match r {
+                    Ok(pcm) => {
+                        if self.player.is_none() {
+                            match rodio::OutputStream::try_default() {
+                                Ok((stream, handle)) => {
+                                    self.player = Some(Player {
+                                        _stream: stream,
+                                        handle,
+                                        sink: None,
+                                    })
+                                }
+                                Err(e) => {
+                                    self.note(format!("No audio output device: {e}"));
+                                    return Task::none();
+                                }
+                            }
+                        }
+                        if let Some(p) = self.player.as_mut() {
+                            if let Some(old) = p.sink.take() {
+                                old.stop();
+                            }
+                            match rodio::Sink::try_new(&p.handle) {
+                                Ok(sink) => {
+                                    sink.set_volume(gain);
+                                    sink.append(rodio::buffer::SamplesBuffer::new(
+                                        pcm.1,
+                                        pcm.2,
+                                        (*pcm.0).clone(),
+                                    ));
+                                    p.sink = Some(sink);
+                                    self.note(format!("Playing at {:+.1} dB loudness-matched gain (first 2 minutes).", 20. * gain.log10()));
+                                }
+                                Err(e) => self.note(format!("Playback failed: {e}")),
+                            }
+                        }
+                    }
+                    Err(e) => self.note(e),
+                }
+            }
+            Message::StopAudio => {
+                if let Some(p) = self.player.as_mut()
+                    && let Some(s) = p.sink.take()
+                {
+                    s.stop();
+                }
+                self.playing = None;
             }
             Message::PaneResized(e) => self.panes.resize(e.split, e.ratio),
             Message::PaneDragged(pane_grid::DragEvent::Dropped { pane, target }) => {
