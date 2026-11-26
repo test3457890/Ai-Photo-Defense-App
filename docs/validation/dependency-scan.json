@@ -1,0 +1,98 @@
+{
+  "checked_at": "2026-11-26",
+  "scope": "Cargo.lock including optional packages",
+  "vulnerability_count": 0,
+  "warnings": [
+    {
+      "category": "unmaintained",
+      "package": "instant",
+      "version": "0.1.13",
+      "advisory": "RUSTSEC-2024-0384"
+    },
+    {
+      "category": "unmaintained",
+      "package": "paste",
+      "version": "1.0.15",
+      "advisory": "RUSTSEC-2024-0436"
+    },
+    {
+      "category": "unmaintained",
+      "package": "pin-utils",
+      "version": "0.1.1",
+      "advisory": "RUSTSEC-2026-0441"
+    },
+    {
+      "category": "unmaintained",
+      "package": "rustybuzz",
+      "version": "0.14.1",
+      "advisory": "RUSTSEC-2026-0206"
+    },
+    {
+      "category": "unmaintained",
+      "package": "ttf-parser",
+      "version": "0.20.0",
+      "advisory": "RUSTSEC-2026-0192"
+    },
+    {
+      "category": "unmaintained",
+      "package": "ttf-parser",
+      "version": "0.21.1",
+      "advisory": "RUSTSEC-2026-0192"
+    },
+    {
+      "category": "unmaintained",
+      "package": "ttf-parser",
+      "version": "0.25.1",
+      "advisory": "RUSTSEC-2026-0192"
+    },
+    {
+      "category": "unmaintained",
+      "package": "zbus_names",
+      "version": "3.0.0",
+      "advisory": "RUSTSEC-2026-0371"
+    },
+    {
+      "category": "unmaintained",
+      "package": "zbus_names",
+      "version": "4.3.5",
+      "advisory": "RUSTSEC-2026-0371"
+    },
+    {
+      "category": "unmaintained",
+      "package": "zvariant",
+      "version": "4.2.0",
+      "advisory": "RUSTSEC-2026-0370"
+    },
+    {
+      "category": "unmaintained",
+      "package": "zvariant",
+      "version": "5.15.1",
+      "advisory": "RUSTSEC-2026-0370"
+    },
+    {
+      "category": "unmaintained",
+      "package": "zvariant_derive",
+      "version": "4.2.0",
+      "advisory": "RUSTSEC-2026-0372"
+    },
+    {
+      "category": "unmaintained",
+      "package": "zvariant_derive",
+      "version": "5.15.1",
+      "advisory": "RUSTSEC-2026-0372"
+    },
+    {
+      "category": "unsound",
+      "package": "lru",
+      "version": "0.12.5",
+      "advisory": "RUSTSEC-2026-0253"
+    },
+    {
+      "category": "unsound",
+      "package": "lru",
+      "version": "0.12.5",
+      "advisory": "RUSTSEC-2026-0002"
+    }
+  ],
+  "triage": "See docs/SECURITY_REVIEW.md. No advisories suppressed. lru is not in the enabled dependency graph."
+}

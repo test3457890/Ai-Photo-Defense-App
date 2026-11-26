@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "checkpoint_sha256": "99d28a652e6ec46629ab7047a0ac82c69b1fe11e0ce672c43af65d3a9a3fc05d",
+  "reference": "Hugging Face CLIPVisionModelWithProjection, eager attention, CPU f32",
+  "versions": {
+    "torch": "2.15.0+cpu",
+    "transformers": "5.24.1",
+    "safetensors": "0.8.0"
+  },
+  "preprocessing": "Bilinear 32x32 to 224x224 stretch, CLIP mean/std; canonical bicubic center crop is intentionally not used",
+  "energy_before_reference": 0.3183661997318268,
+  "energy_before_rust": 0.3183659613132477,
+  "max_absolute_input_gradient_difference": 2.6263296604156494e-06,
+  "energy_after_two_steps_reference": 0.23868612945079803,
+  "energy_after_two_steps_rust": 0.23868626356124878,
+  "max_absolute_optimized_pixel_difference": 5.960464477539063e-08,
+  "passed": true,
+  "scope": "Architecture and gradient parity on one synthetic input only",
+  "ai_efficacy": "not evaluated"
+}

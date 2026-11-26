@@ -1,0 +1,8 @@
+/target/
+/exports/
+/models/
+*.tmp
+*.sqlite*
+
+__pycache__/
+*.pyc

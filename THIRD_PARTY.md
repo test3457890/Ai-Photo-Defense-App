@@ -1,0 +1,11 @@
+# Third-party notices and boundaries
+
+The current original application code is MIT licensed. No PhotoGuard, FaceShield, FaceOff, FaceLock, SGD-Guard, DiffusionGuard, DiffVax, Fawkes, DCT-Shield, BlurGuard, VETO, Glaze, Nightshade, ShieldShot or DeepSafe implementation has been copied or bundled. Research references appear in docs/research/AUDIT.md for attribution and future evaluation.
+
+Important direct dependencies include Iced (MIT), image (MIT/Apache-2.0), Candle (MIT/Apache-2.0), Clap (MIT/Apache-2.0), serde (MIT/Apache-2.0), serde_json (MIT/Apache-2.0), tempfile (MIT/Apache-2.0), SHA-2 (MIT/Apache-2.0), BLAKE3 (CC0/Apache-2.0 alternatives as recorded by Cargo metadata), rfd (MIT), Tokio (MIT), anyhow (MIT/Apache-2.0), and safetensors (Apache-2.0). This short overview is not a replacement for exact locked-package notices.
+
+The independent experimental vision transformer follows the CLIP architecture published by Radford et al., Learning Transferable Visual Models From Natural Language Supervision (2021). No CLIP source code or weights are distributed. Refer to https://github.com/openai/CLIP and each checkpoint's own terms when preparing research models.
+
+The reproducible SBOM generator records Cargo package license expressions and repository URLs for all resolved workspace components. Release packaging must collect the applicable full license texts and copyright notices for the exact target artifact. That packaging step and its compliance review remain unfinished; the repository is not claiming that this short file fulfills every binary redistribution obligation.
+
+The synthetic illustration tests/fixtures/calibration.png was created specifically for this project and is dedicated to the public domain under CC0-1.0. It contains no real identity or third-party photograph. Screenshots display that fixture. Generated design concepts are separate from the functional software evidence.
