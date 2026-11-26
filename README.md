@@ -1,12 +1,17 @@
 # AI Photo Defense
 
-Offline Rust desktop utility and research workbench for photograph privacy and adversarial image defense. Development preview, not a validated protection product.
+Offline Rust desktop workstation and research workbench for photograph privacy and adversarial image defense. Development preview, not a validated protection product.
 
-The desktop application imports images, exports metadata-free copies, compares decoded pixels and runs transformation measurements. A separate optional CLI experiment optimizes a real CLIP image encoder using input gradients. No defense against editing, face swapping, identity cloning, recognition training or generative training has yet been independently demonstrated by this project. No photograph can be guaranteed immune to manipulation.
+The desktop application imports photographs and folders, scans them locally for privacy findings (metadata, QR codes and barcodes, credentials and personal data in decoded text), edits and redacts them non-destructively, and exports flattened, metadata-free copies that are reopened and verified before they are saved. A separate optional CLI experiment optimizes a real CLIP image encoder using input gradients. No defense against editing, face swapping, identity cloning, recognition training or generative training has yet been independently demonstrated by this project. No photograph can be guaranteed immune to manipulation.
 
 ## Working today
 
-- Essential, Professional and Technical workspaces share one in-memory collection.
+- Essential, Professional and Technical modes share one collection and one edit stack per photograph. Workspaces: Batch Export, Privacy Scan, Edit and Redact, AI Defense (status), Protection History, Defense Lab, Model Library, Settings.
+- Non-destructive editing: crop (freeform, selection, 1:1, 4:3, 3:2, 16:9, 9:16, 4:5, custom), rotate, straighten, flip, resize/fit social presets, undo/redo and history.
+- Selections (rectangle and ellipse by mouse drag or coordinates; polygon, lasso and brush in the engine and recipes) with Gaussian blur, pixelation and mosaic (visual concealment) or opaque black/white/custom redaction (secure). Background concealment by inverting a selection.
+- Local Privacy Scan: EXIF/GPS/device/timestamps, XMP, IPTC, ICC, comments, thumbnails, multi-picture and trailing embedded images, multi-page/animated files; QR, Data Matrix, PDF417, Aztec and 1-D codes (decoded locally, never opened); 45+ credential and personal-data rules with checksum validation, evidence levels and US/UK/Canada rules; 12 privacy profiles plus custom JSON profiles. Findings never contain the sensitive value.
+- Secure export pipeline with final verification of the encoded bytes: metadata, remaining credential codes, redaction completeness and hidden colour under transparency. Failing exports are blocked unless you explicitly accept the reviewed findings.
+- Batch processing of files and folders (recursive, symlinks never followed, duplicates skipped, review queue by default, explicit auto-redaction, cancel, unique output names, polling folder watch in the CLI).
 - Local JPEG, PNG, WebP and TIFF decoding with file, dimension, pixel and allocation limits.
 - Drag-and-drop and file-dialog import; command-line paths can also open in the desktop app.
 - Batch export without overwriting originals or existing destinations.
@@ -21,7 +26,7 @@ The desktop application imports images, exports metadata-free copies, compares d
 
 ## Current boundaries
 
-The desktop export button removes metadata. It does not run the experimental CLI defense. No validated defense model is installed. Quick/Balanced/Maximum protection presets are not enabled because their effectiveness has not been measured. Watermarking, C2PA, model downloads, signed updates, GPU inference, folder monitoring, SQLite history, full docking and persisted collections remain unfinished. Technical mode measures image transformations; it does not run face swaps or AI editors.
+Export removes metadata and applies your edits and redactions. It does not run the experimental CLI defense. No validated defense model is installed. Face, person, object, document, screen and licence-plate detection and OCR of text in the pixels are **not available** until verified local models are licensed and integrated; every scan lists these as not examined. Automated scanning never guarantees privacy. Quick/Balanced/Maximum protection presets are not enabled because their effectiveness has not been measured. Watermarking, C2PA, model downloads, signed updates, GPU inference, folder monitoring, SQLite history, full docking and persisted collections remain unfinished. Technical mode measures image transformations; it does not run face swaps or AI editors.
 
 Only 8-bit images are accepted. Color management is pending: dropping an ICC profile can change appearance, especially for wide-gamut photographs. Work on copies and inspect exported colors before sharing. Multi-page TIFF and animated inputs export only the first image/frame. JPEG rejects transparency. The transformation lab currently requires opaque images for JPEG tests. RAW and HEIC are not supported.
 
@@ -42,17 +47,23 @@ mkdir exports
 cargo run --locked -p photo-cli -- export photo.png --output-dir exports --format png
 cargo run --locked -p photo-cli -- compare photo.png exports/photo-private.png
 cargo run --locked -p photo-cli -- lab photo.png exports/photo-private.png --report exports/lab.json
+cargo run --locked -p photo-cli -- scan photo.png --profile "Cybersecurity"
+cargo run --locked -p photo-cli -- process photo.png -o exports --aspect 4:5 --fit 1080x1350 --redact 40,60,200,80 --auto-redact
+cargo run --locked -p photo-cli -- batch ./photos -o exports --recursive --profile "Home Privacy"
+cargo run --locked -p photo-cli -- profiles "Travel" > travel.json
 ```
 
 [User guide](docs/USER_GUIDE.md) explains workspaces, shortcuts, limits and report interpretation. [Experimental CLIP guide](docs/EXPERIMENTAL_CLIP.md) explains how to build the optional model experiment. It is not a production protection preset.
 
 ## Actual software screenshots
 
-These are captures of a running Linux build using an original synthetic calibration illustration. They show metadata export and quality measurements, not demonstrated AI protection.
+Captures of the running Windows 10 build (this version) using the original CC0 synthetic calibration illustration with a fake Wi-Fi QR code added for testing. They show privacy scanning, redaction and verified export, not demonstrated AI protection.
 
-![Professional workspace](docs/screenshots/professional.jpg)
+![Privacy Scan finding a Wi-Fi credential QR code](docs/screenshots/privacy-scan.png)
 
-[Essential workspace](docs/screenshots/essential.jpg) | [Technical workspace](docs/screenshots/technical.jpg)
+[Edit and Redact](docs/screenshots/edit-redact.png) | [Verified export](docs/screenshots/export-verified.png) | [AI Defense status](docs/screenshots/technical-ai-defense.png)
+
+Earlier Linux captures of version 0.1: [Essential](docs/screenshots/essential.jpg), [Professional](docs/screenshots/professional.jpg), [Technical](docs/screenshots/technical.jpg).
 
 ## Validation
 
@@ -62,13 +73,17 @@ cargo test --locked --workspace --all-features
 cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 cargo build --locked --workspace --all-features
 cargo audit
+cargo deny check
 ```
 
 See [testing](docs/TESTING.md), [security review](docs/SECURITY_REVIEW.md) and [handoff](HANDOFF.md) for actual results and unresolved blockers. CI builds are verification artifacts, not signed public releases. Downloadable production releases will follow platform runtime testing, dependency remediation and defense validation.
 
 ## Documentation
 
+- [Master specification](docs/MASTER_SPECIFICATION.md) and [implementation matrix](docs/IMPLEMENTATION_MATRIX.md)
+- [Development handoff](HANDOFF.md)
 - [Architecture and SDK](docs/ARCHITECTURE.md)
+- [Model licensing register](docs/research/MODEL_LICENSES.md)
 - [Research and licensing audit](docs/research/AUDIT.md)
 - [Design review](docs/design/REVIEW.md)
 - [Threat model](docs/THREAT_MODEL.md)

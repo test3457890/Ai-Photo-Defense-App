@@ -9,8 +9,21 @@ A Cargo workspace shares code between the desktop interface and CLI. There is no
 | photo-engine/clip | Candle CLIP ViT-B/32 vision transformer and image gradients | Experimental opt-in feature |
 | photo-models | License manifest and local safetensors verification | Implemented; downloads/catalog pending |
 | photo-lab | Paired deterministic transformations and quality reports | Implemented; AI evaluation adapters pending |
+| photo-edit | Non-destructive edit stack, geometry, masks, concealment, secure redaction, flattening | Implemented and tested |
+| photo-privacy | Metadata inspector, QR/barcode detection, sensitive-text rules, privacy profiles | Implemented and tested; model-based detectors unavailable |
+| photo-pipeline | Secure export pipeline, re-open verification, batch collection and processing, folder monitor | Implemented and tested |
 | photo-cli | Clap automation interface | Implemented |
-| photo-desktop | Iced workspaces and shared document collection | Initial functional implementation |
+| photo-desktop | Iced workspaces and shared document collection | Functional; tested on Windows 10 |
+
+## Edit and export model
+
+Each photograph owns an `EditStack` of serializable operations applied to the untouched original at render time; undo moves a cursor and a new edit discards the redo branch. Selections are stored geometrically (rect, ellipse, polygon, brush, union, refined) and rasterized to hard-edged binary masks so secure redaction covers whole pixels. `flatten` produces one raster and clears colour under fully transparent pixels.
+
+`photo_pipeline::prepare` runs: initial scan of the original bytes, render, metadata-free encode, then `verify` reopens the encoded bytes under the import limits, inspects container metadata, re-runs code detection, checks every redacted pixel (exactly for lossless formats, interior with tolerance for JPEG), and checks transparency. `publish` writes the image and report with no-clobber unique names, and refuses when verification failed unless the caller explicitly accepts. Redaction regions are re-located for verification only when no geometry edit follows a redaction; otherwise the report says so.
+
+## Privacy Scan model
+
+Detectors report availability. Findings carry category, evidence (Confirmed, Pattern, Contextual), source, optional region and value length, never the value. Text rules run over decoded code payloads, metadata text and any OCR text an installed engine supplies through `ScanInput.ocr_text`. Categories whose detector is unavailable are listed in `not_examined` so the UI and reports never imply they were checked.
 
 ## Desktop document lifecycle
 

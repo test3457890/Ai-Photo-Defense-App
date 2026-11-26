@@ -31,3 +31,17 @@ An SBOM generator and CI audit workflow are included. The SBOM is an inventory, 
 - Certificate/key lifecycle before optional C2PA signing; no authenticity indicator without successful signature verification.
 
 CLI export image and sidecar publication are separate; an image can be saved when report publication fails. The error is reported and the copy is retained. This preserves user data but is not an atomic two-file transaction. Existing names remain untouched. Same-user adversaries controlling the selected output directory are outside the current filesystem boundary.
+
+
+## 0.2 increment review (2026-11-26)
+
+- Re-opened exports are decoded with `decode_bounded` (format allow-list, 16,384 px side, 24 MP, 256 MiB allocation, 8-bit only), the same limits as imports.
+- Metadata parsers operate only on the in-memory byte snapshot, with bounds-checked reads, segment/chunk iteration caps (4,096) and TIFF IFD loop detection; malformed inputs are tested not to panic.
+- QR/barcode payloads and OCR text are data only: links are never opened, nothing is executed, and payloads are never logged or written to reports (tests assert secret strings are absent from serialized findings and saved reports).
+- Text scanning is capped at 1 MiB per span and 256 matches per rule; the `regex` crate guarantees linear-time matching.
+- Edit recipes, profiles and manifests are size-limited and use `deny_unknown_fields` where applicable; selection complexity, brush radius, blur sigma, block size and output dimensions are bounded.
+- Batch collection never follows symbolic links or junctions, requires every canonical path to stay inside the selected root, excludes the output directory and caps depth (16) and file count (10,000).
+- Output files are written via private temporary files and atomic no-clobber renames; names are sanitized and uniquely suffixed.
+- No `unsafe` code in workspace crates.
+- `cargo audit`: no vulnerabilities. Informational: RUSTSEC-2026-0543 chrono unmaintained (new, via rxing; no fixed release), lru unsound advisories via the Iced text stack (pre-existing), several unmaintained transitive crates (pre-existing). `cargo deny check` passes with the new deny.toml.
+- Open items: fuzzing harness, decoder sandboxing/process isolation, Windows junction test, split model local-use vs redistribution approval.

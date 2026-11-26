@@ -4,10 +4,11 @@ default-members = ["crates/cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/test3457890/Ai-Photo-Defense-App"
+publish = false
 
 [workspace.dependencies]
 anyhow = "1.0"
@@ -22,6 +23,9 @@ photo-core = { path = "crates/core" }
 photo-engine = { path = "crates/engine" }
 photo-models = { path = "crates/models" }
 photo-lab = { path = "crates/lab" }
+photo-edit = { path = "crates/edit" }
+photo-privacy = { path = "crates/privacy" }
+photo-pipeline = { path = "crates/pipeline" }
 
 [profile.dev]
 debug = 0

@@ -1,0 +1,21 @@
+[package]
+name = "photo-pipeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Secure export pipeline, final privacy verification and batch processing"
+
+[dependencies]
+anyhow.workspace = true
+image.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+photo-core.workspace = true
+photo-edit.workspace = true
+photo-privacy.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+rxing = { version = "0.9.4", default-features = false, features = ["encoders"] }

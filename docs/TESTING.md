@@ -1,5 +1,13 @@
 # Testing and evaluation
 
+## 0.2 increment (Windows 10, 2026-11-26)
+
+46 automated tests pass with default features (`cargo test --locked --workspace`) and 47 with `--all-features` (adds the CLIP gradient test): edit geometry, undo/redo, straighten bounds, every selection shape, secure redaction pixel replacement, visual concealment, inverted selections, transparency flattening, recipe limits; metadata inspection of clean encoder output and injected EXIF/XMP/IPTC/comments/PNG text/ICC/trailing images; hostile container inputs; QR detection, classification and tiling for small codes; checksum-validated identifiers (Luhn, IBAN, ABA, ICAO MRZ, SIN); credential and network rules; country rules; values never serialized; profile round-trips and evidence thresholds; pipeline blocking of unredacted credential codes, verified redaction in the reopened PNG and JPEG; batch collection, recursion, exclusion, limits, Unix symlink refusal, review queue, duplicates, errors, cancellation, folder monitor; CLI scan/process/batch/profiles.
+
+Runtime GUI test on Windows 10 with a synthetic CC0 fixture plus a fake Wi-Fi QR code: scan, conceal, drag-select redaction, undo, export and verification all observed; the exported file was independently re-scanned with the CLI (0 findings). Detection accuracy (precision/recall) has not been measured: no labelled dataset exists yet.
+
+## 0.1 increment
+
 Local checks on 2026-11-26 used Rust 1.100.0, Linux x86_64 and CPU processing. Re-run the README commands for the current commit. CI results must be inspected separately; workflow definitions alone do not establish success.
 
 ## Automated tests
