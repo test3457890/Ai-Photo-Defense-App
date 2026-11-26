@@ -656,6 +656,7 @@ impl App {
                                     fingerprint: p.fingerprint,
                                     format: p.format,
                                     bytes: p.bytes,
+                                    raw: p.raw,
                                 };
                                 Ok((photo_pipeline::scan_photo(&staged, &profile), dims))
                             },

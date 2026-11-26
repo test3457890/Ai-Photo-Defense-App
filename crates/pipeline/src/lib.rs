@@ -326,6 +326,7 @@ mod tests {
             fingerprint: photo_core::fingerprint(&bytes),
             format: image::ImageFormat::Png,
             bytes,
+            raw: None,
         }
     }
     #[test]

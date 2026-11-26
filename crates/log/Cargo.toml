@@ -1,0 +1,16 @@
+[package]
+name = "photo-log"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Local-only, allowlisted, sanitizing structured logger shared by every component"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+blake3.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

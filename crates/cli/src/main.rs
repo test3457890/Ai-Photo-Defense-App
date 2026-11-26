@@ -423,12 +423,7 @@ fn main() -> Result<()> {
             let photo = load(&input)?;
             let mut edits = photo_edit::EditStack::from_operations(edit.operations()?)?;
             if auto_redact {
-                let staged = photo_core::Photo {
-                    pixels: edits.render(&photo.pixels)?,
-                    fingerprint: photo.fingerprint.clone(),
-                    format: photo.format,
-                    bytes: photo.bytes.clone(),
-                };
+                let staged = photo.with_pixels(edits.render(&photo.pixels)?);
                 let found = photo_pipeline::scan_photo(&staged, &profile).findings;
                 if let Some(op) = photo_pipeline::conceal_findings(&found, profile.redaction, 4) {
                     edits.push(op)?;

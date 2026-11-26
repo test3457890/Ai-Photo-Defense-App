@@ -26,6 +26,9 @@ photo-lab = { path = "crates/lab" }
 photo-edit = { path = "crates/edit" }
 photo-privacy = { path = "crates/privacy" }
 photo-pipeline = { path = "crates/pipeline" }
+photo-log = { path = "crates/log" }
+photo-project = { path = "crates/project" }
+photo-catalog = { path = "crates/catalog" }
 
 [profile.dev]
 debug = 0

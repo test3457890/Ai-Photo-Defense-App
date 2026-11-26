@@ -244,12 +244,7 @@ fn process(
     let mut edits = EditStack::from_operations(opts.edits.clone())?;
     // Findings are located on the edited geometry so their boxes match the output.
     let geometry = edits.render(&photo.pixels)?;
-    let staged = photo_core::Photo {
-        pixels: geometry,
-        fingerprint: photo.fingerprint.clone(),
-        format: photo.format,
-        bytes: photo.bytes.clone(),
-    };
+    let staged = photo.with_pixels(geometry);
     let scan = crate::scan_photo(&staged, &opts.profile);
     let pixel_findings: Vec<Finding> = scan
         .findings
