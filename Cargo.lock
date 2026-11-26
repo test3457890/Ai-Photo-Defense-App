@@ -3353,6 +3353,8 @@ dependencies = [
  "candle-core",
  "candle-nn",
  "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]

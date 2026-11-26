@@ -3,3 +3,6 @@
 /models/
 *.tmp
 *.sqlite*
+
+__pycache__/
+*.pyc

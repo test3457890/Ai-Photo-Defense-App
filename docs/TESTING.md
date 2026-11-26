@@ -29,13 +29,13 @@ A compiled native build was opened in the desktop session with tests/fixtures/ca
 5. Eight real transformation comparisons completed in Technical mode; reports remain explicit that AI efficacy is not evaluated.
 6. Light/Dark theme selection worked.
 
-The minimal desktop initially had no functioning window manager focus and lacked a usable native file-dialog service. After restoring desktop window focus, keyboard and mouse tests ran. Native dialogs still did not appear in that environment; direct path inputs and startup/drag import are the fallback. Native dialog testing on ordinary Windows, macOS and supported Linux desktops remains pending. Save-report dialog fallback is not yet implemented; use the CLI for report files when the desktop dialog service is unavailable.
+The minimal desktop initially had no functioning window manager focus and lacked a usable native file-dialog service. After restoring desktop window focus, keyboard and mouse tests ran. Native dialogs still did not appear in that environment; direct path inputs and startup/drag import are the fallback. Native dialog testing on ordinary Windows, macOS and supported Linux desktops remains pending. Lab reports use the configured output directory when present, avoiding the unavailable dialog service.
 
 Actual screenshots: [Essential](screenshots/essential.jpg), [Professional](screenshots/professional.jpg), [Technical](screenshots/technical.jpg). They show this development build, not a finished protection product. The conceptual mockups are not software screenshots. Full keyboard traversal, drag/drop across different desktop environments, zoom/pan precision, cancellation during large batches and screen readers require further testing.
 
 ## Model computation smoke
 
-See EXPERIMENTAL_CLIP.md for the checkpoint hash, synthetic input, observed feature energies and limitations. This is not an attack benchmark. No unsupported efficacy percentage is inferred from these results.
+See EXPERIMENTAL_CLIP.md for the checkpoint hash, synthetic input, observed feature energies and limitations. A full pretrained checkpoint also passed a Hugging Face Transformers/PyTorch reference comparison on the same synthetic input. The recorded maximum gradient error was 0.00000262633. This is not an attack benchmark. No unsupported efficacy percentage is inferred from these results.
 
 ## Defense efficacy protocol, pending implementation
 
@@ -48,3 +48,7 @@ Use fixed prompt/mask sets, multiple attack seeds and models that were not used 
 Transformation tests must cover platform JPEG/WebP recompression, resizing, crops, actual screenshots, denoising, adaptive purification and combinations. Current Gaussian blur is neither a realistic learned denoiser nor an adaptive purifier. Current WebP is lossless; lossy WebP testing is pending. Current timestamps measure transform plus quality computation, not CPU utilization or memory peaks.
 
 Do not claim complete immunity, commercially unrestricted upstream rights, cross-model transfer or superiority until independently reviewable evidence supports the exact statement.
+
+## Hosted platform verification
+
+The initial foundation commit `124a906130166578d985e9f445034ed139e1fc16` passed all jobs in [Rust verification run 45868746998](https://github.com/test3457890/Ai-Photo-Defense-App/actions/runs/45868746998): Clippy, native-host tests, and target builds for Linux x64, Windows MSVC x64, macOS Intel and macOS Apple Silicon. [Dependency security run 45868746947](https://github.com/test3457890/Ai-Photo-Defense-App/actions/runs/45868746947) also passed. These verify compilation and automated tests, not Windows/macOS GUI runtime behavior or installers. New commits require fresh CI checks.

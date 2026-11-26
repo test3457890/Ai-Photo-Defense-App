@@ -75,7 +75,7 @@ enum Message {
     Lab,
     LabDone(Result<photo_lab::Report, String>),
     SaveReport,
-    ReportSaved(Result<(), String>),
+    ReportSaved(Result<Option<PathBuf>, String>),
     Event(Event),
     Menu(&'static str),
     ToggleInspector,
@@ -367,29 +367,35 @@ impl App {
             }
             Message::SaveReport if self.report.is_some() => {
                 let report = self.report.clone().unwrap();
+                let directory = self.output_directory.trim().to_string();
                 return Task::perform(
                     async move {
-                        if let Some(f) = rfd::AsyncFileDialog::new()
-                            .set_file_name("lab-report.json")
-                            .save_file()
-                            .await
-                        {
+                        let path = if directory.is_empty() {
+                            rfd::AsyncFileDialog::new()
+                                .set_file_name("lab-report.json")
+                                .save_file()
+                                .await
+                                .map(|f| f.path().to_path_buf())
+                        } else {
+                            Some(PathBuf::from(directory).join("lab-report.json"))
+                        };
+                        if let Some(path) = path {
                             photo_core::save_new(
-                                f.path(),
+                                &path,
                                 &serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?,
                             )
-                            .map_err(|e| e.to_string())
+                            .map_err(|e| e.to_string())?;
+                            Ok(Some(path))
                         } else {
-                            Ok(())
+                            Ok(None)
                         }
                     },
                     Message::ReportSaved,
                 );
             }
             Message::ReportSaved(r) => match r {
-                Ok(()) => {
-                    self.note("Report dialog finished. Existing files are never overwritten.")
-                }
+                Ok(Some(path)) => self.note(format!("Lab report saved: {}", path.display())),
+                Ok(None) => self.note("Report save cancelled."),
                 Err(e) => self.note(e),
             },
             Message::Event(Event::Window(window::Event::FileDropped(path))) => {

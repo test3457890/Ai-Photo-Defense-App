@@ -27,3 +27,16 @@ Size: 605157884 bytes. This conversion artifact is not approved for bundling by 
 The manual probe accepts a local file after the operator independently verifies its hash. It performs no download, writes no image, and does not run an editor. The small test architecture uses deterministic synthetic weights solely to compare analytical gradients with finite differences. Neither test fixture is offered as a usable defense.
 
 Before enabling a desktop protection preset: verify inference parity with a primary implementation, check gradients on the full pretrained model, benchmark quantized outputs against real supported editor/identity systems, test purification and holdout models, establish licensing and publish uncertainty. A CLIP-only surrogate may transfer poorly or fail entirely.
+
+## Primary-framework comparison
+
+A second check used the same pinned checkpoint in Hugging Face Transformers CLIPVisionModelWithProjection with eager attention and CPU f32, using the identical bilinear preprocessing and objective. The Rust implementation and PyTorch reference agreed on this synthetic input: maximum absolute input-gradient difference 0.00000262633 and maximum optimized-pixel difference 0.0000000596046. The full machine-readable result and exact package versions are in [clip-reference-parity.json](validation/clip-reference-parity.json). This checks one input and one objective; it does not validate downstream protection or every numerical/backend path.
+
+To reproduce, install the optional reference-only Python tools in an isolated environment. The observed versions were torch 2.15.0+cpu, transformers 5.24.1 and safetensors 0.8.0. These are developer validation dependencies and are not required by the Rust desktop or CLI. The original checkpoint must be prepared manually and match its pinned hash. Neither script downloads models or uploads inputs.
+
+```sh
+cargo run --locked -p photo-engine --features clip --example clip_probe -- /path/to/model.safetensors /path/to/new-rust-probe.json
+python scripts/clip_reference_check.py /path/to/model.safetensors /path/to/new-rust-probe.json /path/to/new-reference-report.json
+```
+
+The probe refuses a checkpoint with a different size/hash and refuses to overwrite its report. Its synthetic weights test remains distinct from this pretrained-checkpoint comparison. Expand parity tests to varied resolutions and photographs before using this adapter as a supported defense backend.

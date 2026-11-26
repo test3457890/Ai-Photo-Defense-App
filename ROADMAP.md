@@ -34,7 +34,8 @@ The project brief defines the destination. This file distinguishes implemented w
 - [x] Shared-budget multi-objective PGD engine with finite-gradient checks.
 - [x] Experimental Candle CLIP encoder and exact preprocessing gradient path.
 - [x] Tiny-model finite-difference tests and real-checkpoint objective smoke test.
-- [ ] Primary-implementation parity, trained model acceptance and downstream editor validation.
+- [x] Pretrained-checkpoint output/gradient parity against the primary PyTorch framework on one synthetic input.
+- [ ] Broader parity coverage, trained model acceptance and downstream editor validation.
 - [ ] Actual verified implementations targeting diffusion editing, face swapping and identity customization.
 - [ ] Adaptive selection, EOT, perceptual penalties, joint model tuning and interference diagnostics.
 - [ ] Quick/Balanced/Maximum/Custom protection presets based on measured tradeoffs.
@@ -55,7 +56,8 @@ The project brief defines the destination. This file distinguishes implemented w
 - [x] Threat model, local privacy policy, malformed input and export safety tests.
 - [x] Dependency scan; upgrade ML stack to remove eight ZIP advisories.
 - [x] CI definitions for Linux, Windows, macOS Intel and Apple Silicon builds; automated dependency checks and SBOM generation.
-- [ ] Confirm remote CI results and resolve failures. CI compilation is not runtime platform verification.
+- [x] Initial hosted CI passed on all four targets and dependency security. New commits still require green checks.
+- [ ] Complete runtime platform verification beyond compilation and automated tests.
 - [ ] Triage/remove unmaintained transitive dependencies; keep disabled GPU cache advisories outside enabled graphs.
 - [ ] Decoder fuzzing, subprocess resource isolation, model-schema hardening and independent review.
 - [ ] Windows 10/11 and both Mac architectures runtime tests, installers and accessibility checks.

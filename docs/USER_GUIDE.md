@@ -20,7 +20,7 @@ cargo run -p photo-desktop -- --workspace professional first.png second.jpg
 
 ## Technical
 
-Export the selected image, then run the transformation lab. Eight deterministic comparisons apply the same transform to original and exported images. The log shows errors and completed operations. Save report writes JSON with the metric definition and an explicit `not evaluated` AI efficacy field. A JPEG test cannot run on a transparent source; use an opaque image for this lab.
+Export the selected image, then run the transformation lab. Eight deterministic comparisons apply the same transform to original and exported images. The log shows errors and completed operations. Save report writes lab-report.json into the configured output directory, or opens a save dialog if no directory is configured. It writes JSON with the metric definition and an explicit `not evaluated` AI efficacy field. A JPEG test cannot run on a transparent source; use an opaque image for this lab.
 
 The model line truthfully shows no installed desktop defenses. Detailed model catalog controls and hardware monitoring are not yet implemented. GPU inference is not available.
 

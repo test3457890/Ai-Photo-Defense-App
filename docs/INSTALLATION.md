@@ -4,10 +4,10 @@ This is a source-build development preview. No signed installers or verified pub
 
 | Platform | Target | Verification requirement |
 |---|---|---|
-| Windows 10/11 x64 | x86_64-pc-windows-msvc | MSVC build, Windows 10 and 11 runtime smoke, file dialogs, signing pending |
-| macOS Intel | x86_64-apple-darwin | Cross build plus Intel Mac runtime smoke and notarization pending |
-| macOS Apple Silicon | aarch64-apple-darwin | Native build plus Apple Silicon runtime smoke and notarization pending |
-| Linux x64 | x86_64-unknown-linux-gnu | Local build and initial native rendering checked; full desktop workflow testing pending |
+| Windows 10/11 x64 | x86_64-pc-windows-msvc | CI MSVC build passed; Windows 10/11 GUI runtime smoke, file dialogs and signing pending |
+| macOS Intel | x86_64-apple-darwin | CI Intel target build passed; Intel Mac GUI runtime smoke and notarization pending |
+| macOS Apple Silicon | aarch64-apple-darwin | CI Apple Silicon target build passed; Mac GUI runtime smoke and notarization pending |
+| Linux x64 | x86_64-unknown-linux-gnu | CI and local builds passed; native preview/export/lab checked; broader desktop coverage pending |
 
 Install the Rust toolchain through rustup. `rust-toolchain.toml` selects the exact version. Windows requires Visual Studio Build Tools with Desktop development with C++; macOS requires Xcode command line tools. Linux requires a C linker, X11 or Wayland desktop libraries, a usable system font and an xdg-desktop-portal backend for rfd dialogs. A headless shell can run the CLI but cannot directly start a graphical window without a desktop display.
 
