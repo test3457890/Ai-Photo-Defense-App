@@ -100,6 +100,55 @@ pub fn conceal_findings(
     })
 }
 
+/// High-assurance pre-export review. Returns blocking risks; empty means none were found by
+/// the available checks (which never guarantees that no private information remains).
+pub fn pre_export_review(
+    edits: &EditStack,
+    scan: Option<(&ScanReport, &[bool])>,
+    auto_redacted: bool,
+) -> Vec<String> {
+    let mut risks = vec![];
+    match scan {
+        None if !auto_redacted => {
+            risks.push("No privacy scan has been run on this photograph.".into())
+        }
+        None => {}
+        Some((report, dismissed)) => {
+            let unresolved = report
+                .findings
+                .iter()
+                .zip(dismissed)
+                .filter(|(f, d)| !**d && f.region.is_some())
+                .count();
+            let redactions = edits
+                .active()
+                .iter()
+                .filter(|o| o.is_secure_redaction())
+                .count();
+            if unresolved > 0 && redactions == 0 && !auto_redacted {
+                risks.push(format!(
+                    "{unresolved} located finding(s) are neither redacted nor dismissed."
+                ));
+            }
+            let uncertain = report
+                .findings
+                .iter()
+                .zip(dismissed)
+                .filter(|(f, d)| !**d && f.evidence == photo_privacy::Evidence::Contextual)
+                .count();
+            if uncertain > 0 {
+                risks.push(format!(
+                    "{uncertain} uncertain (contextual) finding(s) need review or dismissal."
+                ));
+            }
+        }
+    }
+    if edits.has_visual_only_concealment() {
+        risks.push("Blur or pixelation is visual concealment only; use opaque redaction for sensitive content.".into());
+    }
+    risks
+}
+
 /// Runs every pipeline stage in memory. Nothing is written to disk.
 pub fn prepare(
     photo: &Photo,

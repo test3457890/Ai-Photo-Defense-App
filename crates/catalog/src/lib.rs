@@ -47,13 +47,25 @@ pub struct Catalog {
 }
 
 fn exif_info(bytes: &[u8]) -> (String, String) {
-    let Ok(e) = exif::Reader::new().read_from_container(&mut std::io::Cursor::new(bytes)) else { return (String::new(), String::new()) };
+    let Ok(e) = exif::Reader::new().read_from_container(&mut std::io::Cursor::new(bytes)) else {
+        return (String::new(), String::new());
+    };
     let get = |t| {
         e.get_field(t, exif::In::PRIMARY)
-            .map(|f| f.display_value().to_string().trim_matches('"').chars().filter(|c| !c.is_control()).take(64).collect::<String>())
+            .map(|f| {
+                f.display_value()
+                    .to_string()
+                    .trim_matches('"')
+                    .chars()
+                    .filter(|c| !c.is_control())
+                    .take(64)
+                    .collect::<String>()
+            })
             .unwrap_or_default()
     };
-    let camera = format!("{} {}", get(exif::Tag::Make), get(exif::Tag::Model)).trim().to_string();
+    let camera = format!("{} {}", get(exif::Tag::Make), get(exif::Tag::Model))
+        .trim()
+        .to_string();
     (camera, get(exif::Tag::DateTimeOriginal))
 }
 
@@ -78,7 +90,11 @@ impl Catalog {
              CREATE TABLE IF NOT EXISTS album_photos(album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
                photo_id INTEGER NOT NULL REFERENCES photos(id) ON DELETE CASCADE, PRIMARY KEY(album_id, photo_id));",
         )?;
-        let v: Option<i64> = db.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r.get(0)).optional()?;
+        let v: Option<i64> = db
+            .query_row("SELECT value FROM meta WHERE key='schema'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
         match v {
             None => {
                 db.execute("INSERT INTO meta(key,value) VALUES('schema',?1)", [SCHEMA])?;
@@ -90,7 +106,9 @@ impl Catalog {
 
     /// Imports a photo after a full bounded decode (so only readable images are catalogued).
     pub fn add(&self, path: &Path) -> Result<i64> {
-        let photo = photo_core::load(path).inspect_err(|e| photo_log::warn(Component::Catalog, Code::DecodeFailed, &format!("{e:#}")))?;
+        let photo = photo_core::load(path).inspect_err(|e| {
+            photo_log::warn(Component::Catalog, Code::DecodeFailed, &format!("{e:#}"))
+        })?;
         let (camera, captured) = exif_info(&photo.bytes);
         let format = match photo.raw {
             Some(k) => format!("RAW {k:?}"),
@@ -102,40 +120,68 @@ impl Catalog {
              ON CONFLICT(path) DO UPDATE SET blake3=excluded.blake3,size=excluded.size,width=excluded.width,height=excluded.height,format=excluded.format,camera=excluded.camera,captured=excluded.captured",
             params![p, photo.fingerprint.blake3, photo.bytes.len() as i64, photo.pixels.width(), photo.pixels.height(), format, camera, captured],
         )?;
-        Ok(self.db.query_row("SELECT id FROM photos WHERE path=?1", [p], |r| r.get(0))?)
+        Ok(self
+            .db
+            .query_row("SELECT id FROM photos WHERE path=?1", [p], |r| r.get(0))?)
     }
     pub fn set_rating(&self, id: i64, rating: u8) -> Result<()> {
         ensure!(rating <= 5, "Rating must be 0..5");
-        self.db.execute("UPDATE photos SET rating=?1 WHERE id=?2", params![rating, id])?;
+        self.db.execute(
+            "UPDATE photos SET rating=?1 WHERE id=?2",
+            params![rating, id],
+        )?;
         Ok(())
     }
     pub fn set_flag(&self, id: i64, flagged: bool) -> Result<()> {
-        self.db.execute("UPDATE photos SET flagged=?1 WHERE id=?2", params![flagged, id])?;
+        self.db.execute(
+            "UPDATE photos SET flagged=?1 WHERE id=?2",
+            params![flagged, id],
+        )?;
         Ok(())
     }
     pub fn tag(&self, id: i64, tag: &str) -> Result<()> {
         let t = tag.trim();
-        ensure!(!t.is_empty() && t.len() <= 64 && !t.chars().any(char::is_control), "Tags must be 1..64 printable characters");
-        self.db.execute("INSERT OR IGNORE INTO tags(photo_id,tag) VALUES(?1,?2)", params![id, t])?;
+        ensure!(
+            !t.is_empty() && t.len() <= 64 && !t.chars().any(char::is_control),
+            "Tags must be 1..64 printable characters"
+        );
+        self.db.execute(
+            "INSERT OR IGNORE INTO tags(photo_id,tag) VALUES(?1,?2)",
+            params![id, t],
+        )?;
         Ok(())
     }
     pub fn untag(&self, id: i64, tag: &str) -> Result<()> {
-        self.db.execute("DELETE FROM tags WHERE photo_id=?1 AND tag=?2", params![id, tag])?;
+        self.db.execute(
+            "DELETE FROM tags WHERE photo_id=?1 AND tag=?2",
+            params![id, tag],
+        )?;
         Ok(())
     }
     pub fn album(&self, name: &str) -> Result<i64> {
         let n = name.trim();
-        ensure!(!n.is_empty() && n.len() <= 100, "Album names must be 1..100 characters");
-        self.db.execute("INSERT OR IGNORE INTO albums(name) VALUES(?1)", [n])?;
-        Ok(self.db.query_row("SELECT id FROM albums WHERE name=?1", [n], |r| r.get(0))?)
+        ensure!(
+            !n.is_empty() && n.len() <= 100,
+            "Album names must be 1..100 characters"
+        );
+        self.db
+            .execute("INSERT OR IGNORE INTO albums(name) VALUES(?1)", [n])?;
+        Ok(self
+            .db
+            .query_row("SELECT id FROM albums WHERE name=?1", [n], |r| r.get(0))?)
     }
     pub fn add_to_album(&self, album: i64, photo: i64) -> Result<()> {
-        self.db.execute("INSERT OR IGNORE INTO album_photos(album_id,photo_id) VALUES(?1,?2)", params![album, photo])?;
+        self.db.execute(
+            "INSERT OR IGNORE INTO album_photos(album_id,photo_id) VALUES(?1,?2)",
+            params![album, photo],
+        )?;
         Ok(())
     }
     pub fn albums(&self) -> Result<Vec<(i64, String, i64)>> {
         let mut s = self.db.prepare("SELECT a.id,a.name,(SELECT COUNT(*) FROM album_photos p WHERE p.album_id=a.id) FROM albums a ORDER BY a.name")?;
-        let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<Result<_, _>>()?;
+        let rows = s
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<Result<_, _>>()?;
         Ok(rows)
     }
     pub fn remove(&self, id: i64) -> Result<()> {
@@ -144,7 +190,14 @@ impl Catalog {
     }
     /// Parameterised query; user text is never interpolated into SQL.
     pub fn query(&self, f: &Filter) -> Result<Vec<PhotoRow>> {
-        let like = |s: &str| format!("%{}%", s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_"));
+        let like = |s: &str| {
+            format!(
+                "%{}%",
+                s.replace('\\', "\\\\")
+                    .replace('%', "\\%")
+                    .replace('_', "\\_")
+            )
+        };
         let mut s = self.db.prepare(
             "SELECT p.id,p.path,p.blake3,p.size,p.width,p.height,p.format,p.camera,p.captured,p.rating,p.flagged FROM photos p
              WHERE p.rating >= ?1
@@ -160,7 +213,18 @@ impl Catalog {
         )?;
         let rows: Vec<PhotoRow> = s
             .query_map(
-                params![f.min_rating, f.text, like(&f.text), f.format, f.camera, f.tag, f.album, f.date_from, f.date_to, f.flagged_only],
+                params![
+                    f.min_rating,
+                    f.text,
+                    like(&f.text),
+                    f.format,
+                    f.camera,
+                    f.tag,
+                    f.album,
+                    f.date_from,
+                    f.date_to,
+                    f.flagged_only
+                ],
                 |r| {
                     Ok(PhotoRow {
                         id: r.get(0)?,
@@ -179,10 +243,14 @@ impl Catalog {
                 },
             )?
             .collect::<Result<_, _>>()?;
-        let mut t = self.db.prepare("SELECT tag FROM tags WHERE photo_id=?1 ORDER BY tag")?;
+        let mut t = self
+            .db
+            .prepare("SELECT tag FROM tags WHERE photo_id=?1 ORDER BY tag")?;
         rows.into_iter()
             .map(|mut row| {
-                row.tags = t.query_map([row.id], |r| r.get(0))?.collect::<Result<_, _>>()?;
+                row.tags = t
+                    .query_map([row.id], |r| r.get(0))?
+                    .collect::<Result<_, _>>()?;
                 Ok(row)
             })
             .collect()
@@ -201,11 +269,18 @@ impl Catalog {
         Ok(out.into_iter().map(|(_, v)| v).collect())
     }
     pub fn missing(&self) -> Result<Vec<(i64, PathBuf)>> {
-        Ok(self.query(&Filter::default())?.into_iter().filter(|r| !r.path.is_file()).map(|r| (r.id, r.path)).collect())
+        Ok(self
+            .query(&Filter::default())?
+            .into_iter()
+            .filter(|r| !r.path.is_file())
+            .map(|r| (r.id, r.path))
+            .collect())
     }
     pub fn distinct(&self, column: &str) -> Result<Vec<String>> {
         ensure!(matches!(column, "format" | "camera"), "Unknown column");
-        let mut s = self.db.prepare(&format!("SELECT DISTINCT {column} FROM photos WHERE {column} <> '' ORDER BY 1"))?;
+        let mut s = self.db.prepare(&format!(
+            "SELECT DISTINCT {column} FROM photos WHERE {column} <> '' ORDER BY 1"
+        ))?;
         Ok(s.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?)
     }
 }
@@ -227,9 +302,15 @@ impl ThumbCache {
     }
     fn file(&self, hash: &str) -> Option<PathBuf> {
         let d = self.dir.as_ref()?;
-        hash.chars().all(|c| c.is_ascii_hexdigit()).then(|| d.join(format!("{}.png", &hash[..hash.len().min(64)])))
+        hash.chars()
+            .all(|c| c.is_ascii_hexdigit())
+            .then(|| d.join(format!("{}.png", &hash[..hash.len().min(64)])))
     }
-    pub fn get_or_make(&self, hash: &str, make: impl FnOnce() -> Result<image::DynamicImage>) -> Result<image::DynamicImage> {
+    pub fn get_or_make(
+        &self,
+        hash: &str,
+        make: impl FnOnce() -> Result<image::DynamicImage>,
+    ) -> Result<image::DynamicImage> {
         if let Some(f) = self.file(hash)
             && let Ok(b) = std::fs::read(&f)
             && let Ok((img, _)) = photo_core::decode_bounded(&b)
@@ -244,7 +325,15 @@ impl ThumbCache {
         Ok(img)
     }
     pub fn size_bytes(&self) -> u64 {
-        self.dir.as_ref().and_then(|d| std::fs::read_dir(d).ok()).map(|r| r.filter_map(|e| e.ok()?.metadata().ok()).map(|m| m.len()).sum()).unwrap_or(0)
+        self.dir
+            .as_ref()
+            .and_then(|d| std::fs::read_dir(d).ok())
+            .map(|r| {
+                r.filter_map(|e| e.ok()?.metadata().ok())
+                    .map(|m| m.len())
+                    .sum()
+            })
+            .unwrap_or(0)
     }
     /// Overwrites each cached file with zeros, syncs, then deletes it.
     pub fn clear(&self) -> Result<usize> {
@@ -279,8 +368,16 @@ mod tests {
     use super::*;
     fn img(dir: &Path, name: &str, shade: u8) -> PathBuf {
         let p = dir.join(name);
-        let i = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(20, 10, image::Rgb([shade; 3])));
-        std::fs::write(&p, photo_core::encode(&i, photo_core::ExportFormat::Png, 90).unwrap()).unwrap();
+        let i = image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            20,
+            10,
+            image::Rgb([shade; 3]),
+        ));
+        std::fs::write(
+            &p,
+            photo_core::encode(&i, photo_core::ExportFormat::Png, 90).unwrap(),
+        )
+        .unwrap();
         p
     }
     #[test]
@@ -298,15 +395,65 @@ mod tests {
         c.set_flag(x, true).unwrap();
         let alb = c.album("Summer").unwrap();
         c.add_to_album(alb, a).unwrap();
-        assert_eq!(c.query(&Filter { min_rating: 4, ..Default::default() }).unwrap().len(), 1);
-        assert_eq!(c.query(&Filter { tag: Some("work".into()), ..Default::default() }).unwrap()[0].id, x);
-        assert_eq!(c.query(&Filter { album: Some("Summer".into()), ..Default::default() }).unwrap()[0].tags, vec!["holiday"]);
-        assert_eq!(c.query(&Filter { text: "beach".into(), ..Default::default() }).unwrap().len(), 1);
-        assert_eq!(c.query(&Filter { flagged_only: true, ..Default::default() }).unwrap().len(), 1);
+        assert_eq!(
+            c.query(&Filter {
+                min_rating: 4,
+                ..Default::default()
+            })
+            .unwrap()
+            .len(),
+            1
+        );
+        assert_eq!(
+            c.query(&Filter {
+                tag: Some("work".into()),
+                ..Default::default()
+            })
+            .unwrap()[0]
+                .id,
+            x
+        );
+        assert_eq!(
+            c.query(&Filter {
+                album: Some("Summer".into()),
+                ..Default::default()
+            })
+            .unwrap()[0]
+                .tags,
+            vec!["holiday"]
+        );
+        assert_eq!(
+            c.query(&Filter {
+                text: "beach".into(),
+                ..Default::default()
+            })
+            .unwrap()
+            .len(),
+            1
+        );
+        assert_eq!(
+            c.query(&Filter {
+                flagged_only: true,
+                ..Default::default()
+            })
+            .unwrap()
+            .len(),
+            1
+        );
         // SQL metacharacters are data, not syntax.
-        assert!(c.query(&Filter { text: "'; DROP TABLE photos; --".into(), ..Default::default() }).unwrap().is_empty());
+        assert!(
+            c.query(&Filter {
+                text: "'; DROP TABLE photos; --".into(),
+                ..Default::default()
+            })
+            .unwrap()
+            .is_empty()
+        );
         assert_eq!(c.query(&Filter::default()).unwrap().len(), 3);
-        assert_eq!(c.duplicates().unwrap(), vec![vec![d.path().join("beach.png"), d.path().join("copy.png")]]);
+        assert_eq!(
+            c.duplicates().unwrap(),
+            vec![vec![d.path().join("beach.png"), d.path().join("copy.png")]]
+        );
         std::fs::remove_file(d.path().join("copy.png")).unwrap();
         assert_eq!(c.missing().unwrap(), vec![(b, d.path().join("copy.png"))]);
         assert_eq!(c.distinct("format").unwrap(), vec!["Png"]);
@@ -319,11 +466,23 @@ mod tests {
         assert!(!ThumbCache::disabled().is_enabled());
         let d = tempfile::tempdir().unwrap();
         let cache = ThumbCache::enabled(d.path().join("thumbs")).unwrap();
-        let t = cache.get_or_make("abcdef", || Ok(image::DynamicImage::new_rgb8(800, 600))).unwrap();
+        let t = cache
+            .get_or_make("abcdef", || Ok(image::DynamicImage::new_rgb8(800, 600)))
+            .unwrap();
         assert!(t.width() <= 256);
         assert!(cache.size_bytes() > 0);
-        assert_eq!(cache.get_or_make("abcdef", || anyhow::bail!("should hit cache")).unwrap().width(), t.width());
-        assert!(cache.get_or_make("../../evil", || Ok(image::DynamicImage::new_rgb8(4, 4))).is_ok());
+        assert_eq!(
+            cache
+                .get_or_make("abcdef", || anyhow::bail!("should hit cache"))
+                .unwrap()
+                .width(),
+            t.width()
+        );
+        assert!(
+            cache
+                .get_or_make("../../evil", || Ok(image::DynamicImage::new_rgb8(4, 4)))
+                .is_ok()
+        );
         assert!(!d.path().join("evil.png").exists());
         assert_eq!(cache.clear().unwrap(), 1);
         assert_eq!(cache.size_bytes(), 0);

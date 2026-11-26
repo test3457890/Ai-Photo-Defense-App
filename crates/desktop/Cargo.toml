@@ -17,5 +17,9 @@ photo-edit.workspace = true
 photo-privacy.workspace = true
 photo-pipeline.workspace = true
 anyhow.workspace = true
+photo-log.workspace = true
+photo-project.workspace = true
+photo-catalog.workspace = true
+sysinfo = { version = "0.40", default-features = false, features = ["system", "disk"] }
 serde.workspace = true
 serde_json.workspace = true

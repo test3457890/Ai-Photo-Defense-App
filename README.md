@@ -1,10 +1,13 @@
 # AI Photo Defense
 
-Offline Rust desktop workstation and research workbench for photograph privacy and adversarial image defense. Development preview, not a validated protection product.
+Offline, Rust-native photography workstation for privacy: professional editing and colour correction, local Privacy Scan, permanent redaction, verified export, diagnostics and crash recovery, plus an experimental adversarial-defense research bench. Development preview, not a validated protection product.
 
 The desktop application imports photographs and folders, scans them locally for privacy findings (metadata, QR codes and barcodes, credentials and personal data in decoded text), edits and redacts them non-destructively, and exports flattened, metadata-free copies that are reopened and verified before they are saved. A separate optional CLI experiment optimizes a real CLIP image encoder using input gradients. No defense against editing, face swapping, identity cloning, recognition training or generative training has yet been independently demonstrated by this project. No photograph can be guaranteed immune to manipulation.
 
 ## Working today
+
+Part 3 (this branch) adds: a redesigned native interface with three distinct modes (Essential processing list, Professional dockable workspace with library, viewer, filmstrip and inspector, Technical diagnostics/performance/forensics pages); Color Studio (linear-light white balance and exposure, tone, curves, HSL, grading, LUT import/export, presets, histogram and clipping warnings); adjustment layers with gradient, radial and selection masks, blend modes and opacity; perspective, lens and canvas corrections; RAW files via their embedded camera preview; SQLite Media Manager; structured, privacy-sanitised local logging; autosave and crash recovery; high-assurance export review; read-only forensic inspection. See [HANDOFF.md](HANDOFF.md) for exactly what was verified.
+
 
 - Essential, Professional and Technical modes share one collection and one edit stack per photograph. Workspaces: Batch Export, Privacy Scan, Edit and Redact, AI Defense (status), Protection History, Defense Lab, Model Library, Settings.
 - Non-destructive editing: crop (freeform, selection, 1:1, 4:3, 3:2, 16:9, 9:16, 4:5, custom), rotate, straighten, flip, resize/fit social presets, undo/redo and history.
@@ -59,7 +62,11 @@ cargo run --locked -p photo-cli -- profiles "Travel" > travel.json
 
 Captures of the running Windows 10 build (this version) using the original CC0 synthetic calibration illustration with a fake Wi-Fi QR code added for testing. They show privacy scanning, redaction and verified export, not demonstrated AI protection.
 
-![Privacy Scan finding a Wi-Fi credential QR code](docs/screenshots/privacy-scan.png)
+![Professional mode](docs/screenshots/part3-professional.png)
+
+[Essential](docs/screenshots/part3-essential.png) | [Diagnostics](docs/screenshots/part3-technical-diagnostics.png) | [Performance](docs/screenshots/part3-technical-performance.png) | [Forensics](docs/screenshots/part3-technical-forensics.png) | [Light theme and menu](docs/screenshots/part3-light-photo-menu.png) | [Smaller window](docs/screenshots/part3-small-window.png)
+
+Part 2 captures: [Privacy Scan](docs/screenshots/privacy-scan.png)
 
 [Edit and Redact](docs/screenshots/edit-redact.png) | [Verified export](docs/screenshots/export-verified.png) | [AI Defense status](docs/screenshots/technical-ai-defense.png)
 
@@ -80,7 +87,9 @@ See [testing](docs/TESTING.md), [security review](docs/SECURITY_REVIEW.md) and [
 
 ## Documentation
 
-- [Master specification](docs/MASTER_SPECIFICATION.md) and [implementation matrix](docs/IMPLEMENTATION_MATRIX.md)
+- [Master specification](docs/MASTER_SPECIFICATION.md), [Part 3 specification](docs/PART3_SPECIFICATION.md) and [implementation matrix](docs/IMPLEMENTATION_MATRIX.md)
+- [User guides](docs/guides/README.md), [design evaluation](docs/design/PART3_DESIGN.md), [benchmarks](docs/BENCHMARKS.md)
+- [Camera compatibility](docs/CAMERA_COMPATIBILITY.md), [hardware compatibility](docs/HARDWARE_COMPATIBILITY.md), [Part 4 video roadmap](docs/ROADMAP_PART4_VIDEO.md)
 - [Development handoff](HANDOFF.md)
 - [Architecture and SDK](docs/ARCHITECTURE.md)
 - [Model licensing register](docs/research/MODEL_LICENSES.md)

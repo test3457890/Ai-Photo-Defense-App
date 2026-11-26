@@ -9,18 +9,15 @@ use anyhow::{Result, bail, ensure};
 use image::{Rgba, RgbaImage};
 use serde::{Deserialize, Serialize};
 
-pub const HSL_BANDS: [&str; 8] = ["Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta"];
+pub const HSL_BANDS: [&str; 8] = [
+    "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta",
+];
 const BAND_CENTERS: [f32; 8] = [0., 30., 60., 120., 180., 225., 270., 315.];
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Curve {
     /// Control points in [0,1]x[0,1], sorted by x. Identity when empty.
     pub points: Vec<(f32, f32)>,
-}
-impl Default for Curve {
-    fn default() -> Self {
-        Self { points: vec![] }
-    }
 }
 impl Curve {
     pub fn is_identity(&self) -> bool {
@@ -42,8 +39,17 @@ impl Curve {
     }
     fn validate(&self) -> Result<()> {
         ensure!(self.points.len() <= 32, "Too many curve points");
-        ensure!(self.points.iter().all(|(x, y)| x.is_finite() && y.is_finite() && (0.0..=1.0).contains(x) && (0.0..=1.0).contains(y)), "Curve points must be in [0,1]");
-        ensure!(self.points.windows(2).all(|w| w[0].0 < w[1].0), "Curve x values must increase");
+        ensure!(
+            self.points.iter().all(|(x, y)| x.is_finite()
+                && y.is_finite()
+                && (0.0..=1.0).contains(x)
+                && (0.0..=1.0).contains(y)),
+            "Curve points must be in [0,1]"
+        );
+        ensure!(
+            self.points.windows(2).all(|w| w[0].0 < w[1].0),
+            "Curve x values must increase"
+        );
         Ok(())
     }
     /// Monotone cubic (Fritsch-Carlson) lookup table with 1024 entries.
@@ -54,12 +60,19 @@ impl Curve {
         }
         let p = &self.points;
         let m = p.len();
-        let d: Vec<f32> = p.windows(2).map(|w| (w[1].1 - w[0].1) / (w[1].0 - w[0].0)).collect();
+        let d: Vec<f32> = p
+            .windows(2)
+            .map(|w| (w[1].1 - w[0].1) / (w[1].0 - w[0].0))
+            .collect();
         let mut t = vec![0f32; m];
         t[0] = d[0];
         t[m - 1] = d[m - 2];
         for i in 1..m - 1 {
-            t[i] = if d[i - 1] * d[i] <= 0. { 0. } else { (d[i - 1] + d[i]) / 2. };
+            t[i] = if d[i - 1] * d[i] <= 0. {
+                0.
+            } else {
+                (d[i - 1] + d[i]) / 2.
+            };
         }
         for i in 0..m - 1 {
             if d[i] == 0. {
@@ -84,11 +97,20 @@ impl Curve {
                 if x >= p[m - 1].0 {
                     return p[m - 1].1;
                 }
-                let k = p.windows(2).position(|w| x >= w[0].0 && x <= w[1].0).unwrap_or(0);
+                let k = p
+                    .windows(2)
+                    .position(|w| x >= w[0].0 && x <= w[1].0)
+                    .unwrap_or(0);
                 let h = p[k + 1].0 - p[k].0;
                 let s = (x - p[k].0) / h;
-                let (h00, h10, h01, h11) = (2. * s.powi(3) - 3. * s * s + 1., s.powi(3) - 2. * s * s + s, -2. * s.powi(3) + 3. * s * s, s.powi(3) - s * s);
-                (h00 * p[k].1 + h10 * h * t[k] + h01 * p[k + 1].1 + h11 * h * t[k + 1]).clamp(0., 1.)
+                let (h00, h10, h01, h11) = (
+                    2. * s.powi(3) - 3. * s * s + 1.,
+                    s.powi(3) - 2. * s * s + s,
+                    -2. * s.powi(3) + 3. * s * s,
+                    s.powi(3) - s * s,
+                );
+                (h00 * p[k].1 + h10 * h * t[k] + h01 * p[k + 1].1 + h11 * h * t[k + 1])
+                    .clamp(0., 1.)
             })
             .collect()
     }
@@ -124,25 +146,52 @@ impl Lut3d {
                 Some("LUT_1D_SIZE") => bail!("1D LUTs are not supported"),
                 Some("DOMAIN_MIN") | Some("DOMAIN_MAX") => {
                     let v: Vec<f32> = it.map(str::parse).collect::<Result<_, _>>()?;
-                    ensure!(v.len() == 3 && v.iter().all(|x| x.is_finite()), "Invalid LUT domain");
-                    if l.starts_with("DOMAIN_MIN") { dmin = [v[0], v[1], v[2]] } else { dmax = [v[0], v[1], v[2]] }
+                    ensure!(
+                        v.len() == 3 && v.iter().all(|x| x.is_finite()),
+                        "Invalid LUT domain"
+                    );
+                    if l.starts_with("DOMAIN_MIN") {
+                        dmin = [v[0], v[1], v[2]]
+                    } else {
+                        dmax = [v[0], v[1], v[2]]
+                    }
                 }
                 Some(first) => {
                     ensure!(size > 0, "LUT data before LUT_3D_SIZE");
-                    let v: Vec<f32> = std::iter::once(first).chain(it).map(str::parse).collect::<Result<_, _>>()?;
-                    ensure!(v.len() == 3 && v.iter().all(|x| x.is_finite() && (-4.0..=4.0).contains(x)), "Invalid LUT entry");
+                    let v: Vec<f32> = std::iter::once(first)
+                        .chain(it)
+                        .map(str::parse)
+                        .collect::<Result<_, _>>()?;
+                    ensure!(
+                        v.len() == 3 && v.iter().all(|x| x.is_finite() && (-4.0..=4.0).contains(x)),
+                        "Invalid LUT entry"
+                    );
                     ensure!(data.len() < size * size * size, "Too many LUT entries");
                     data.push([v[0], v[1], v[2]]);
                 }
                 None => {}
             }
         }
-        ensure!(size > 0 && data.len() == size * size * size, "LUT has {} entries, expected {}", data.len(), size * size * size);
+        ensure!(
+            size > 0 && data.len() == size * size * size,
+            "LUT has {} entries, expected {}",
+            data.len(),
+            size * size * size
+        );
         ensure!((0..3).all(|c| dmax[c] > dmin[c]), "Invalid LUT domain");
-        Ok(Self { size, data, domain_min: dmin, domain_max: dmax })
+        Ok(Self {
+            size,
+            data,
+            domain_min: dmin,
+            domain_max: dmax,
+        })
     }
     pub fn to_cube(&self, title: &str) -> String {
-        let mut s = format!("TITLE \"{}\"\nLUT_3D_SIZE {}\n", title.replace(['"', '\n', '\r'], ""), self.size);
+        let mut s = format!(
+            "TITLE \"{}\"\nLUT_3D_SIZE {}\n",
+            title.replace(['"', '\n', '\r'], ""),
+            self.size
+        );
         for v in &self.data {
             s.push_str(&format!("{:.6} {:.6} {:.6}\n", v[0], v[1], v[2]));
         }
@@ -151,10 +200,18 @@ impl Lut3d {
     /// Trilinear sample. Red varies fastest, per the .cube specification.
     pub fn sample(&self, rgb: [f32; 3]) -> [f32; 3] {
         let n = self.size;
-        let f = |c: usize| ((rgb[c] - self.domain_min[c]) / (self.domain_max[c] - self.domain_min[c])).clamp(0., 1.) * (n - 1) as f32;
+        let f = |c: usize| {
+            ((rgb[c] - self.domain_min[c]) / (self.domain_max[c] - self.domain_min[c]))
+                .clamp(0., 1.)
+                * (n - 1) as f32
+        };
         let (r, g, b) = (f(0), f(1), f(2));
         let (r0, g0, b0) = (r.floor() as usize, g.floor() as usize, b.floor() as usize);
-        let (r1, g1, b1) = ((r0 + 1).min(n - 1), (g0 + 1).min(n - 1), (b0 + 1).min(n - 1));
+        let (r1, g1, b1) = (
+            (r0 + 1).min(n - 1),
+            (g0 + 1).min(n - 1),
+            (b0 + 1).min(n - 1),
+        );
         let (fr, fg, fb) = (r - r0 as f32, g - g0 as f32, b - b0 as f32);
         let at = |r: usize, g: usize, b: usize| self.data[r + g * n + b * n * n];
         let mut out = [0.; 3];
@@ -218,14 +275,44 @@ pub struct Adjustments {
 impl Default for Adjustments {
     fn default() -> Self {
         Self {
-            exposure: 0., brightness: 0., contrast: 0., highlights: 0., shadows: 0., whites: 0., blacks: 0.,
-            saturation: 0., vibrance: 0., temperature: 0., tint: 0., clarity: 0., texture: 0., dehaze: 0.,
-            sharpness: 0., noise_reduction: 0., vignette: 0., grain: 0., gamma: 1., black_point: 0., white_point: 1.,
-            balance_shadows: [0.; 3], balance_midtones: [0.; 3], balance_highlights: [0.; 3],
-            split_shadow_hue: 220., split_shadow_strength: 0., split_highlight_hue: 40., split_highlight_strength: 0.,
-            hsl_hue: [0.; 8], hsl_saturation: [0.; 8], hsl_luminance: [0.; 8], lum_saturation: [0.; 3],
-            curve_master: Curve::default(), curve_red: Curve::default(), curve_green: Curve::default(), curve_blue: Curve::default(),
-            lut: None, lut_strength: 1.,
+            exposure: 0.,
+            brightness: 0.,
+            contrast: 0.,
+            highlights: 0.,
+            shadows: 0.,
+            whites: 0.,
+            blacks: 0.,
+            saturation: 0.,
+            vibrance: 0.,
+            temperature: 0.,
+            tint: 0.,
+            clarity: 0.,
+            texture: 0.,
+            dehaze: 0.,
+            sharpness: 0.,
+            noise_reduction: 0.,
+            vignette: 0.,
+            grain: 0.,
+            gamma: 1.,
+            black_point: 0.,
+            white_point: 1.,
+            balance_shadows: [0.; 3],
+            balance_midtones: [0.; 3],
+            balance_highlights: [0.; 3],
+            split_shadow_hue: 220.,
+            split_shadow_strength: 0.,
+            split_highlight_hue: 40.,
+            split_highlight_strength: 0.,
+            hsl_hue: [0.; 8],
+            hsl_saturation: [0.; 8],
+            hsl_luminance: [0.; 8],
+            lum_saturation: [0.; 3],
+            curve_master: Curve::default(),
+            curve_red: Curve::default(),
+            curve_green: Curve::default(),
+            curve_blue: Curve::default(),
+            lut: None,
+            lut_strength: 1.,
         }
     }
 }
@@ -235,12 +322,66 @@ pub fn presets() -> Vec<(&'static str, Adjustments)> {
     let base = Adjustments::default;
     vec![
         ("Neutral", base()),
-        ("Clean contrast", Adjustments { contrast: 0.2, clarity: 0.15, vibrance: 0.1, ..base() }),
-        ("Soft matte", Adjustments { contrast: -0.15, black_point: 0., curve_master: Curve { points: vec![(0., 0.06), (0.5, 0.5), (1., 0.96)] }, saturation: -0.1, ..base() }),
-        ("Warm evening", Adjustments { temperature: 0.25, tint: 0.05, split_highlight_strength: 0.2, vibrance: 0.1, ..base() }),
-        ("Cool overcast", Adjustments { temperature: -0.2, contrast: 0.1, saturation: -0.1, ..base() }),
-        ("Monochrome", Adjustments { saturation: -1., contrast: 0.15, clarity: 0.1, ..base() }),
-        ("Teal and orange", Adjustments { split_shadow_hue: 190., split_shadow_strength: 0.25, split_highlight_hue: 30., split_highlight_strength: 0.25, contrast: 0.1, ..base() }),
+        (
+            "Clean contrast",
+            Adjustments {
+                contrast: 0.2,
+                clarity: 0.15,
+                vibrance: 0.1,
+                ..base()
+            },
+        ),
+        (
+            "Soft matte",
+            Adjustments {
+                contrast: -0.15,
+                black_point: 0.,
+                curve_master: Curve {
+                    points: vec![(0., 0.06), (0.5, 0.5), (1., 0.96)],
+                },
+                saturation: -0.1,
+                ..base()
+            },
+        ),
+        (
+            "Warm evening",
+            Adjustments {
+                temperature: 0.25,
+                tint: 0.05,
+                split_highlight_strength: 0.2,
+                vibrance: 0.1,
+                ..base()
+            },
+        ),
+        (
+            "Cool overcast",
+            Adjustments {
+                temperature: -0.2,
+                contrast: 0.1,
+                saturation: -0.1,
+                ..base()
+            },
+        ),
+        (
+            "Monochrome",
+            Adjustments {
+                saturation: -1.,
+                contrast: 0.15,
+                clarity: 0.1,
+                ..base()
+            },
+        ),
+        (
+            "Teal and orange",
+            Adjustments {
+                split_shadow_hue: 190.,
+                split_shadow_strength: 0.25,
+                split_highlight_hue: 30.,
+                split_highlight_strength: 0.25,
+                contrast: 0.1,
+                ..base()
+            },
+        ),
     ]
 }
 
@@ -250,35 +391,113 @@ impl Adjustments {
     }
     pub fn validate(&self) -> Result<()> {
         let unit = [
-            self.brightness, self.contrast, self.highlights, self.shadows, self.whites, self.blacks, self.saturation,
-            self.vibrance, self.temperature, self.tint, self.clarity, self.texture, self.dehaze, self.vignette,
+            self.brightness,
+            self.contrast,
+            self.highlights,
+            self.shadows,
+            self.whites,
+            self.blacks,
+            self.saturation,
+            self.vibrance,
+            self.temperature,
+            self.tint,
+            self.clarity,
+            self.texture,
+            self.dehaze,
+            self.vignette,
         ];
-        ensure!(unit.iter().all(|v| v.is_finite() && (-1.0..=1.0).contains(v)), "Adjustment out of range (-1..1)");
-        ensure!(self.exposure.is_finite() && (-5.0..=5.0).contains(&self.exposure), "Exposure must be -5..5 EV");
-        ensure!([self.sharpness, self.noise_reduction, self.grain, self.split_shadow_strength, self.split_highlight_strength, self.lut_strength].iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)), "Strength must be 0..1");
-        ensure!(self.gamma.is_finite() && (0.2..=5.0).contains(&self.gamma), "Gamma must be 0.2..5");
-        ensure!(self.black_point.is_finite() && self.white_point.is_finite() && self.black_point >= 0. && self.white_point <= 1. && self.white_point - self.black_point >= 0.05, "Invalid black/white point");
-        let arrays = self.hsl_hue.iter().chain(&self.hsl_saturation).chain(&self.hsl_luminance).chain(&self.lum_saturation);
-        ensure!(arrays.clone().all(|v| v.is_finite() && (-1.0..=1.0).contains(v)), "HSL value out of range");
-        let bal = self.balance_shadows.iter().chain(&self.balance_midtones).chain(&self.balance_highlights);
-        ensure!(bal.clone().all(|v| v.is_finite() && (-0.25..=0.25).contains(v)), "Color balance out of range");
-        ensure!(self.split_shadow_hue.is_finite() && self.split_highlight_hue.is_finite(), "Invalid hue");
-        for c in [&self.curve_master, &self.curve_red, &self.curve_green, &self.curve_blue] {
+        ensure!(
+            unit.iter()
+                .all(|v| v.is_finite() && (-1.0..=1.0).contains(v)),
+            "Adjustment out of range (-1..1)"
+        );
+        ensure!(
+            self.exposure.is_finite() && (-5.0..=5.0).contains(&self.exposure),
+            "Exposure must be -5..5 EV"
+        );
+        ensure!(
+            [
+                self.sharpness,
+                self.noise_reduction,
+                self.grain,
+                self.split_shadow_strength,
+                self.split_highlight_strength,
+                self.lut_strength
+            ]
+            .iter()
+            .all(|v| v.is_finite() && (0.0..=1.0).contains(v)),
+            "Strength must be 0..1"
+        );
+        ensure!(
+            self.gamma.is_finite() && (0.2..=5.0).contains(&self.gamma),
+            "Gamma must be 0.2..5"
+        );
+        ensure!(
+            self.black_point.is_finite()
+                && self.white_point.is_finite()
+                && self.black_point >= 0.
+                && self.white_point <= 1.
+                && self.white_point - self.black_point >= 0.05,
+            "Invalid black/white point"
+        );
+        let arrays = self
+            .hsl_hue
+            .iter()
+            .chain(&self.hsl_saturation)
+            .chain(&self.hsl_luminance)
+            .chain(&self.lum_saturation);
+        ensure!(
+            arrays
+                .clone()
+                .all(|v| v.is_finite() && (-1.0..=1.0).contains(v)),
+            "HSL value out of range"
+        );
+        let bal = self
+            .balance_shadows
+            .iter()
+            .chain(&self.balance_midtones)
+            .chain(&self.balance_highlights);
+        ensure!(
+            bal.clone()
+                .all(|v| v.is_finite() && (-0.25..=0.25).contains(v)),
+            "Color balance out of range"
+        );
+        ensure!(
+            self.split_shadow_hue.is_finite() && self.split_highlight_hue.is_finite(),
+            "Invalid hue"
+        );
+        for c in [
+            &self.curve_master,
+            &self.curve_red,
+            &self.curve_green,
+            &self.curve_blue,
+        ] {
             c.validate()?;
         }
         if let Some(l) = &self.lut {
-            ensure!((2..=65).contains(&l.size) && l.data.len() == l.size.pow(3), "Invalid LUT");
+            ensure!(
+                (2..=65).contains(&l.size) && l.data.len() == l.size.pow(3),
+                "Invalid LUT"
+            );
         }
         Ok(())
     }
 }
 
 fn srgb_to_linear(v: f32) -> f32 {
-    if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
+    if v <= 0.04045 {
+        v / 12.92
+    } else {
+        ((v + 0.055) / 1.055).powf(2.4)
+    }
 }
 fn linear_to_srgb(v: f32) -> f32 {
     let v = v.max(0.);
-    if v <= 0.003_130_8 { v * 12.92 } else { 1.055 * v.powf(1. / 2.4) - 0.055 }
+    if v <= 0.003_130_8 {
+        v * 12.92
+    } else {
+        1.055 * v.powf(1. / 2.4) - 0.055
+    }
 }
 fn luma(c: [f32; 3]) -> f32 {
     0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
@@ -290,7 +509,11 @@ pub fn rgb_to_hsl(c: [f32; 3]) -> [f32; 3] {
         return [0., 0., l];
     }
     let d = mx - mn;
-    let s = if l > 0.5 { d / (2. - mx - mn) } else { d / (mx + mn) };
+    let s = if l > 0.5 {
+        d / (2. - mx - mn)
+    } else {
+        d / (mx + mn)
+    };
     let h = if mx == c[0] {
         ((c[1] - c[2]) / d).rem_euclid(6.)
     } else if mx == c[1] {
@@ -301,7 +524,11 @@ pub fn rgb_to_hsl(c: [f32; 3]) -> [f32; 3] {
     [h, s, l]
 }
 pub fn hsl_to_rgb(h: [f32; 3]) -> [f32; 3] {
-    let (hh, s, l) = (h[0].rem_euclid(360.), h[1].clamp(0., 1.), h[2].clamp(0., 1.));
+    let (hh, s, l) = (
+        h[0].rem_euclid(360.),
+        h[1].clamp(0., 1.),
+        h[2].clamp(0., 1.),
+    );
     let c = (1. - (2. * l - 1.).abs()) * s;
     let x = c * (1. - ((hh / 60.).rem_euclid(2.) - 1.).abs());
     let m = l - c / 2.;
@@ -319,9 +546,17 @@ fn band_weights(h: f32) -> [f32; 8] {
     let mut w = [0f32; 8];
     for (i, c) in BAND_CENTERS.iter().enumerate() {
         let next = BAND_CENTERS[(i + 1) % 8] + if i == 7 { 360. } else { 0. };
-        let prev = if i == 0 { BAND_CENTERS[7] - 360. } else { BAND_CENTERS[i - 1] };
+        let prev = if i == 0 {
+            BAND_CENTERS[7] - 360.
+        } else {
+            BAND_CENTERS[i - 1]
+        };
         let d = (h - c + 180.).rem_euclid(360.) - 180.;
-        w[i] = if d >= 0. { (1. - d / (next - c)).max(0.) } else { (1. + d / (c - prev)).max(0.) };
+        w[i] = if d >= 0. {
+            (1. - d / (next - c)).max(0.)
+        } else {
+            (1. + d / (c - prev)).max(0.)
+        };
     }
     w
 }
@@ -352,7 +587,11 @@ impl Adjustments {
             red: self.curve_red.lut(),
             green: self.curve_green.lut(),
             blue: self.curve_blue.lut(),
-            wb: [1. + 0.35 * t + 0.1 * g, 1. - 0.25 * g, 1. - 0.35 * t + 0.1 * g],
+            wb: [
+                1. + 0.35 * t + 0.1 * g,
+                1. - 0.25 * g,
+                1. - 0.35 * t + 0.1 * g,
+            ],
             gain: 2f32.powf(self.exposure),
         }
     }
@@ -409,8 +648,15 @@ impl Adjustments {
         }
         hsl[0] += dh;
         hsl[1] *= 1. + ds;
-        let lw = [(1. - hsl[2]).powi(2), 1. - (2. * hsl[2] - 1.).powi(2), hsl[2].powi(2)];
-        hsl[1] *= 1. + lw[0] * self.lum_saturation[0] + lw[1] * self.lum_saturation[1] + lw[2] * self.lum_saturation[2];
+        let lw = [
+            (1. - hsl[2]).powi(2),
+            1. - (2. * hsl[2] - 1.).powi(2),
+            hsl[2].powi(2),
+        ];
+        hsl[1] *= 1.
+            + lw[0] * self.lum_saturation[0]
+            + lw[1] * self.lum_saturation[1]
+            + lw[2] * self.lum_saturation[2];
         hsl[1] *= 1. + self.saturation;
         hsl[1] *= 1. + self.vibrance * (1. - hsl[1].clamp(0., 1.));
         hsl[1] = hsl[1].clamp(0., 1.);
@@ -422,8 +668,11 @@ impl Adjustments {
         let st = hsl_to_rgb([self.split_shadow_hue, 1., 0.5]);
         let ht = hsl_to_rgb([self.split_highlight_hue, 1., 0.5]);
         for i in 0..3 {
-            c[i] += ws * self.balance_shadows[i] + wm * self.balance_midtones[i] + wh * self.balance_highlights[i];
-            c[i] += ws * self.split_shadow_strength * 0.25 * (st[i] - 0.5) + wh * self.split_highlight_strength * 0.25 * (ht[i] - 0.5);
+            c[i] += ws * self.balance_shadows[i]
+                + wm * self.balance_midtones[i]
+                + wh * self.balance_highlights[i];
+            c[i] += ws * self.split_shadow_strength * 0.25 * (st[i] - 0.5)
+                + wh * self.split_highlight_strength * 0.25 * (ht[i] - 0.5);
         }
         if let Some(lut) = &self.lut {
             let o = lut.sample([c[0].clamp(0., 1.), c[1].clamp(0., 1.), c[2].clamp(0., 1.)]);
@@ -441,7 +690,12 @@ impl Adjustments {
         let p = self.prepare();
         let mut out = RgbaImage::new(w, h);
         parallel_rows(img, &mut out, |_, src, dst| {
-            for (s, d) in src.chunks_exact(4).zip(dst.chunks_exact_mut(4)) {
+            for (s, d) in src
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(dst.as_chunks_mut::<4>().0.iter_mut())
+            {
                 let c = self.pixel(&p, [s[0], s[1], s[2]]);
                 for i in 0..3 {
                     d[i] = (c[i].clamp(0., 1.) * 255.).round() as u8;
@@ -460,7 +714,9 @@ impl Adjustments {
             let blurred = image::imageops::blur(&out, 0.6 + 1.4 * self.noise_reduction);
             for (o, b) in out.pixels_mut().zip(blurred.pixels()) {
                 for i in 0..3 {
-                    o[i] = (f32::from(o[i]) + (f32::from(b[i]) - f32::from(o[i])) * self.noise_reduction * 0.8).round() as u8;
+                    o[i] = (f32::from(o[i])
+                        + (f32::from(b[i]) - f32::from(o[i])) * self.noise_reduction * 0.8)
+                        .round() as u8;
                 }
             }
         }
@@ -474,7 +730,11 @@ impl Adjustments {
                 let d = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)) / r2;
                 let v = 1. - self.vignette * d.powi(2) * 0.8;
                 // Deterministic per-pixel noise so renders are reproducible.
-                let n = (((x.wrapping_mul(73_856_093) ^ y.wrapping_mul(19_349_663)) % 1000) as f32 / 1000. - 0.5) * self.grain * 40.;
+                let n = (((x.wrapping_mul(73_856_093) ^ y.wrapping_mul(19_349_663)) % 1000) as f32
+                    / 1000.
+                    - 0.5)
+                    * self.grain
+                    * 40.;
                 for i in 0..3 {
                     px[i] = (f32::from(px[i]) * v + n).clamp(0., 255.).round() as u8;
                 }
@@ -498,15 +758,39 @@ impl Adjustments {
                 }
             }
         }
-        Ok(Lut3d { size, data, domain_min: [0.; 3], domain_max: [1.; 3] })
+        Ok(Lut3d {
+            size,
+            data,
+            domain_min: [0.; 3],
+            domain_max: [1.; 3],
+        })
     }
 }
 
 fn local_contrast(img: &mut RgbaImage, sigma: f32, amount: f32, midtones_only: bool) {
-    let blurred = image::imageops::blur(img, sigma);
+    // Wide radii are low-frequency: blur a downscaled copy and upsample (same result to within
+    // interpolation error, roughly k-squared fewer operations).
+    let blurred = if sigma >= 6. {
+        let (w, h) = img.dimensions();
+        let k = (sigma / 3.).max(1.);
+        let (sw, sh) = (
+            ((w as f32 / k) as u32).max(1),
+            ((h as f32 / k) as u32).max(1),
+        );
+        let small = image::imageops::resize(img, sw, sh, image::imageops::FilterType::Triangle);
+        let small = image::imageops::blur(&small, sigma / k);
+        image::imageops::resize(&small, w, h, image::imageops::FilterType::Triangle)
+    } else {
+        image::imageops::blur(img, sigma)
+    };
     for (o, b) in img.pixels_mut().zip(blurred.pixels()) {
-        let l = (0.2126 * f32::from(o[0]) + 0.7152 * f32::from(o[1]) + 0.0722 * f32::from(o[2])) / 255.;
-        let weight = if midtones_only { 1. - (2. * l - 1.).powi(2) } else { 1. };
+        let l =
+            (0.2126 * f32::from(o[0]) + 0.7152 * f32::from(o[1]) + 0.0722 * f32::from(o[2])) / 255.;
+        let weight = if midtones_only {
+            1. - (2. * l - 1.).powi(2)
+        } else {
+            1.
+        };
         for i in 0..3 {
             let v = f32::from(o[i]) + (f32::from(o[i]) - f32::from(b[i])) * amount * weight;
             o[i] = v.clamp(0., 255.).round() as u8;
@@ -515,13 +799,21 @@ fn local_contrast(img: &mut RgbaImage, sigma: f32, amount: f32, midtones_only: b
 }
 
 /// Runs `f(row_index, src_row, dst_row)` on disjoint row bands using scoped threads.
-pub fn parallel_rows(src: &RgbaImage, dst: &mut RgbaImage, f: impl Fn(u32, &[u8], &mut [u8]) + Sync) {
+pub fn parallel_rows(
+    src: &RgbaImage,
+    dst: &mut RgbaImage,
+    f: impl Fn(u32, &[u8], &mut [u8]) + Sync,
+) {
     let w = src.width() as usize * 4;
     let rows = src.height() as usize;
     if w == 0 || rows == 0 {
         return;
     }
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(16).min(rows);
+    let threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(16)
+        .min(rows);
     let band = rows.div_ceil(threads);
     let s = src.as_raw();
     let d: &mut [u8] = dst;
@@ -551,7 +843,15 @@ pub struct Histogram {
     pub clipped_highlights: u64,
 }
 pub fn histogram(img: &RgbaImage) -> Histogram {
-    let mut h = Histogram { red: vec![0; 256], green: vec![0; 256], blue: vec![0; 256], luma: vec![0; 256], pixels: 0, clipped_shadows: 0, clipped_highlights: 0 };
+    let mut h = Histogram {
+        red: vec![0; 256],
+        green: vec![0; 256],
+        blue: vec![0; 256],
+        luma: vec![0; 256],
+        pixels: 0,
+        clipped_shadows: 0,
+        clipped_highlights: 0,
+    };
     for p in img.pixels() {
         if p[3] == 0 {
             continue;
@@ -559,7 +859,8 @@ pub fn histogram(img: &RgbaImage) -> Histogram {
         h.red[p[0] as usize] += 1;
         h.green[p[1] as usize] += 1;
         h.blue[p[2] as usize] += 1;
-        let l = (0.2126 * f32::from(p[0]) + 0.7152 * f32::from(p[1]) + 0.0722 * f32::from(p[2])).round() as usize;
+        let l = (0.2126 * f32::from(p[0]) + 0.7152 * f32::from(p[1]) + 0.0722 * f32::from(p[2]))
+            .round() as usize;
         h.luma[l.min(255)] += 1;
         h.pixels += 1;
         if p[0] == 0 || p[1] == 0 || p[2] == 0 {
@@ -591,20 +892,47 @@ pub fn auto_adjust(img: &RgbaImage) -> Adjustments {
     let h = histogram(img);
     let total: u64 = h.luma.iter().map(|&v| u64::from(v)).sum::<u64>().max(1);
     let mut acc = 0u64;
-    let median = h.luma.iter().position(|&v| { acc += u64::from(v); acc * 2 >= total }).unwrap_or(128) as f32 / 255.;
-    let ev = if median > 0.01 { (srgb_to_linear(0.46) / srgb_to_linear(median)).log2().clamp(-2., 2.) } else { 0. };
-    let mean = |c: &Vec<u32>| c.iter().enumerate().map(|(i, &n)| i as f64 * f64::from(n)).sum::<f64>() / total as f64;
+    let median = h
+        .luma
+        .iter()
+        .position(|&v| {
+            acc += u64::from(v);
+            acc * 2 >= total
+        })
+        .unwrap_or(128) as f32
+        / 255.;
+    let ev = if median > 0.01 {
+        (srgb_to_linear(0.46) / srgb_to_linear(median))
+            .log2()
+            .clamp(-2., 2.)
+    } else {
+        0.
+    };
+    let mean = |c: &Vec<u32>| {
+        c.iter()
+            .enumerate()
+            .map(|(i, &n)| i as f64 * f64::from(n))
+            .sum::<f64>()
+            / total as f64
+    };
     let (r, g, b) = (mean(&h.red), mean(&h.green), mean(&h.blue));
     let temperature = (((b - r) / 255.) * 1.5).clamp(-0.6, 0.6) as f32;
     let tint = (((r + b) / 2. - g) / 255. * 1.5).clamp(-0.6, 0.6) as f32;
-    Adjustments { exposure: (ev * 100.).round() / 100., temperature, tint, ..Adjustments::default() }
+    Adjustments {
+        exposure: (ev * 100.).round() / 100.,
+        temperature,
+        tint,
+        ..Adjustments::default()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     fn ramp() -> RgbaImage {
-        RgbaImage::from_fn(64, 32, |x, y| Rgba([(x * 4) as u8, (y * 8) as u8, ((x + y) * 3 % 256) as u8, 255]))
+        RgbaImage::from_fn(64, 32, |x, y| {
+            Rgba([(x * 4) as u8, (y * 8) as u8, ((x + y) * 3 % 256) as u8, 255])
+        })
     }
     #[test]
     fn identity_is_lossless() {
@@ -615,23 +943,62 @@ mod tests {
     #[test]
     fn exposure_is_linear_light_and_monotone() {
         let img = RgbaImage::from_pixel(4, 4, Rgba([100, 100, 100, 255]));
-        let up = Adjustments { exposure: 1., ..Default::default() }.apply(&img).unwrap();
+        let up = Adjustments {
+            exposure: 1.,
+            ..Default::default()
+        }
+        .apply(&img)
+        .unwrap();
         // +1 EV doubles linear light: sRGB 100 (lin 0.127) -> lin 0.254 -> sRGB ~138.
-        assert!((i32::from(up.get_pixel(0, 0)[0]) - 138).abs() <= 1, "{}", up.get_pixel(0, 0)[0]);
-        let down = Adjustments { exposure: -1., ..Default::default() }.apply(&img).unwrap();
+        assert!(
+            (i32::from(up.get_pixel(0, 0)[0]) - 138).abs() <= 1,
+            "{}",
+            up.get_pixel(0, 0)[0]
+        );
+        let down = Adjustments {
+            exposure: -1.,
+            ..Default::default()
+        }
+        .apply(&img)
+        .unwrap();
         assert!(down.get_pixel(0, 0)[0] < 100);
     }
     #[test]
     fn controls_move_in_expected_direction() {
         let img = ramp();
-        let mean = |i: &RgbaImage, c: usize| i.pixels().map(|p| f64::from(p[c])).sum::<f64>() / i.pixels().len() as f64;
-        let warm = Adjustments { temperature: 0.5, ..Default::default() }.apply(&img).unwrap();
+        let mean = |i: &RgbaImage, c: usize| {
+            i.pixels().map(|p| f64::from(p[c])).sum::<f64>() / i.pixels().len() as f64
+        };
+        let warm = Adjustments {
+            temperature: 0.5,
+            ..Default::default()
+        }
+        .apply(&img)
+        .unwrap();
         assert!(mean(&warm, 0) > mean(&img, 0) && mean(&warm, 2) < mean(&img, 2));
-        let mono = Adjustments { saturation: -1., ..Default::default() }.apply(&img).unwrap();
-        assert!(mono.pixels().all(|p| p[0].abs_diff(p[1]) <= 1 && p[1].abs_diff(p[2]) <= 1));
-        let bright = Adjustments { shadows: 1., ..Default::default() }.apply(&img).unwrap();
+        let mono = Adjustments {
+            saturation: -1.,
+            ..Default::default()
+        }
+        .apply(&img)
+        .unwrap();
+        assert!(
+            mono.pixels()
+                .all(|p| p[0].abs_diff(p[1]) <= 1 && p[1].abs_diff(p[2]) <= 1)
+        );
+        let bright = Adjustments {
+            shadows: 1.,
+            ..Default::default()
+        }
+        .apply(&img)
+        .unwrap();
         assert!(mean(&bright, 1) > mean(&img, 1));
-        let c = Adjustments { contrast: 0.5, ..Default::default() }.apply(&img).unwrap();
+        let c = Adjustments {
+            contrast: 0.5,
+            ..Default::default()
+        }
+        .apply(&img)
+        .unwrap();
         assert!(c.get_pixel(0, 0)[1] <= img.get_pixel(0, 0)[1]);
     }
     #[test]
@@ -639,9 +1006,21 @@ mod tests {
         let lut = Curve::parametric(0.5, 0.2, -0.3, -0.5).lut();
         assert!(lut.windows(2).all(|w| w[1] >= w[0] - 1e-6));
         assert!((lut[0]).abs() < 1e-6 && (lut[1023] - 1.).abs() < 1e-6);
-        let bad = Adjustments { curve_master: Curve { points: vec![(0.5, 0.), (0.2, 1.)] }, ..Default::default() };
+        let bad = Adjustments {
+            curve_master: Curve {
+                points: vec![(0.5, 0.), (0.2, 1.)],
+            },
+            ..Default::default()
+        };
         assert!(bad.apply(&ramp()).is_err());
-        assert!(Adjustments { exposure: f32::NAN, ..Default::default() }.validate().is_err());
+        assert!(
+            Adjustments {
+                exposure: f32::NAN,
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
     }
     #[test]
     fn hsl_roundtrip_and_band_weights() {
@@ -656,16 +1035,36 @@ mod tests {
     }
     #[test]
     fn cube_parse_bake_roundtrip_and_hostile_files() {
-        let adj = Adjustments { temperature: 0.3, contrast: 0.2, ..Default::default() };
+        let adj = Adjustments {
+            temperature: 0.3,
+            contrast: 0.2,
+            ..Default::default()
+        };
         let lut = adj.bake_lut(17).unwrap();
         let parsed = Lut3d::parse_cube(&lut.to_cube("test")).unwrap();
         assert_eq!(parsed.size, 17);
         let img = ramp();
         let direct = adj.apply(&img).unwrap();
-        let via = Adjustments { lut: Some(parsed), ..Default::default() }.apply(&img).unwrap();
-        let max = direct.pixels().zip(via.pixels()).map(|(a, b)| (0..3).map(|i| a[i].abs_diff(b[i])).max().unwrap()).max().unwrap();
+        let via = Adjustments {
+            lut: Some(parsed),
+            ..Default::default()
+        }
+        .apply(&img)
+        .unwrap();
+        let max = direct
+            .pixels()
+            .zip(via.pixels())
+            .map(|(a, b)| (0..3).map(|i| a[i].abs_diff(b[i])).max().unwrap())
+            .max()
+            .unwrap();
         assert!(max <= 6, "baked LUT within interpolation error, got {max}");
-        for bad in ["LUT_3D_SIZE 1000\n", "LUT_3D_SIZE 2\n0 0 0\n", "0 0 0\n", "LUT_3D_SIZE 2\n0 0 nan\n0 0 0\n0 0 0\n0 0 0\n0 0 0\n0 0 0\n0 0 0\n0 0 0\n", "LUT_1D_SIZE 4\n"] {
+        for bad in [
+            "LUT_3D_SIZE 1000\n",
+            "LUT_3D_SIZE 2\n0 0 0\n",
+            "0 0 0\n",
+            "LUT_3D_SIZE 2\n0 0 nan\n0 0 0\n0 0 0\n0 0 0\n0 0 0\n0 0 0\n0 0 0\n0 0 0\n",
+            "LUT_1D_SIZE 4\n",
+        ] {
             assert!(Lut3d::parse_cube(bad).is_err(), "{bad}");
         }
     }
@@ -675,10 +1074,20 @@ mod tests {
         img.put_pixel(0, 0, Rgba([255, 255, 255, 255]));
         img.put_pixel(1, 0, Rgba([0, 0, 0, 255]));
         let h = histogram(&img);
-        assert_eq!((h.pixels, h.clipped_highlights, h.clipped_shadows), (100, 1, 1));
-        assert_eq!(clipping_overlay(&img).get_pixel(0, 0), &Rgba([255, 0, 0, 255]));
+        assert_eq!(
+            (h.pixels, h.clipped_highlights, h.clipped_shadows),
+            (100, 1, 1)
+        );
+        assert_eq!(
+            clipping_overlay(&img).get_pixel(0, 0),
+            &Rgba([255, 0, 0, 255])
+        );
         let a = auto_adjust(&img);
-        assert!(a.exposure > 0.5, "dark image gets positive exposure: {}", a.exposure);
+        assert!(
+            a.exposure > 0.5,
+            "dark image gets positive exposure: {}",
+            a.exposure
+        );
         let blue = RgbaImage::from_pixel(8, 8, Rgba([90, 110, 170, 255]));
         assert!(auto_adjust(&blue).temperature > 0.);
     }
@@ -688,7 +1097,11 @@ mod tests {
             p.validate().unwrap();
         }
         let img = ramp();
-        let adj = Adjustments { vibrance: 0.4, hsl_hue: [0.5; 8], ..Default::default() };
+        let adj = Adjustments {
+            vibrance: 0.4,
+            hsl_hue: [0.5; 8],
+            ..Default::default()
+        };
         let a = adj.apply(&img).unwrap();
         let b = adj.apply(&img).unwrap();
         assert_eq!(a, b);

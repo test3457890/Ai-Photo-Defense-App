@@ -134,6 +134,10 @@ enum Command {
     },
     /// List built-in privacy profiles, or print one as JSON for editing and re-import.
     Profiles { name: Option<String> },
+    /// Read-only forensic inspection (hashes, EXIF, JPEG tables, C2PA presence). Output is sensitive.
+    Forensics { input: PathBuf },
+    /// Extract the embedded camera preview from a RAW file as a new JPEG (no RAW development).
+    RawPreview { input: PathBuf, output: PathBuf },
 }
 #[derive(clap::Args, Clone)]
 struct ProfileArgs {
@@ -533,6 +537,32 @@ fn main() -> Result<()> {
                 s.failed == 0,
                 "{} file(s) failed; other results were preserved",
                 s.failed
+            );
+        }
+        Command::Forensics { input } => {
+            let p = load(&input)?;
+            eprintln!(
+                "Sensitive: this report contains file metadata values. Do not share it without review."
+            );
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&photo_privacy::forensics::inspect(&p.bytes))?
+            );
+        }
+        Command::RawPreview { input, output } => {
+            use std::io::Read;
+            let mut b = vec![];
+            std::fs::File::open(&input)?
+                .take(photo_core::raw::MAX_RAW_BYTES + 1)
+                .read_to_end(&mut b)?;
+            let ext = input.extension().and_then(|e| e.to_str());
+            let p = photo_core::raw::extract_preview(&b, ext)?;
+            save_new(&output, &p.jpeg)?;
+            println!(
+                "{:?} preview: {} bytes ({} candidates). Note: embedded camera JPEG, not RAW development; it may contain EXIF.",
+                p.kind,
+                p.jpeg.len(),
+                p.candidates
             );
         }
         Command::Profiles { name } => match name {

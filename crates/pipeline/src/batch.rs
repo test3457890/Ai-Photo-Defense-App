@@ -13,7 +13,10 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-pub const EXTENSIONS: [&str; 6] = ["jpg", "jpeg", "png", "webp", "tif", "tiff"];
+pub const EXTENSIONS: [&str; 16] = [
+    "jpg", "jpeg", "png", "webp", "tif", "tiff", "dng", "cr2", "cr3", "nef", "arw", "raf", "orf",
+    "rw2", "pef", "srw",
+];
 
 #[derive(Debug, Clone)]
 pub struct CollectOptions {

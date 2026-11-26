@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.0 development preview (Part 3), 2026-11-26
+
+Redesigned native interface with three distinct modes; Color Studio and adjustment layers with soft masks and blend modes; perspective, lens and canvas corrections; RAW embedded-preview support; SQLite Media Manager; structured privacy-sanitised logging (`photo-log`); projects with atomic saves, autosave journal and crash recovery (`photo-project`); Diagnostics, Performance and Forensic workspaces; high-assurance export review; CLI `forensics` and `raw-preview`. Security: replaced a vulnerable bundled SQLite (RUSTSEC-2026-0459) before release by moving to rusqlite 0.43. RAW development, adversarial protection, model-based detection, accessibility and GPU acceleration remain unavailable.
+
 ## 0.2.0 development preview, 2026-11-26
 
 Part 2 foundation, audited against the 0.1 work. Added `photo-edit` (non-destructive edit stack, crop/aspect/resize/rotate/straighten/flip, masks, blur/pixelate/mosaic, opaque secure redaction, flattening), `photo-privacy` (container metadata inspector, local QR/barcode detection with tiling, credential and personal-data rules with checksum validation, 12 privacy profiles with JSON import/export), and `photo-pipeline` (secure export with re-open verification, publish-or-block, safe batch collection, duplicates, review queue, folder monitor). CLI gains `scan`, `process`, `batch` and `profiles`. The desktop app was rebuilt around eight workspaces with drag-to-select redaction, scan overlays and verified export.

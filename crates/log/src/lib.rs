@@ -32,7 +32,14 @@ pub enum Level {
     Critical,
 }
 impl Level {
-    pub const ALL: [Self; 6] = [Self::Trace, Self::Debug, Self::Info, Self::Warning, Self::Error, Self::Critical];
+    pub const ALL: [Self; 6] = [
+        Self::Trace,
+        Self::Debug,
+        Self::Info,
+        Self::Warning,
+        Self::Error,
+        Self::Critical,
+    ];
 }
 impl std::fmt::Display for Level {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -60,8 +67,21 @@ pub enum Component {
 }
 impl Component {
     pub const ALL: [Self; 15] = [
-        Self::App, Self::Gui, Self::Decode, Self::Edit, Self::Color, Self::Raw, Self::Privacy, Self::Model,
-        Self::Export, Self::Batch, Self::Project, Self::Catalog, Self::Security, Self::Performance, Self::Recovery,
+        Self::App,
+        Self::Gui,
+        Self::Decode,
+        Self::Edit,
+        Self::Color,
+        Self::Raw,
+        Self::Privacy,
+        Self::Model,
+        Self::Export,
+        Self::Batch,
+        Self::Project,
+        Self::Catalog,
+        Self::Security,
+        Self::Performance,
+        Self::Recovery,
     ];
 }
 impl std::fmt::Display for Component {
@@ -140,9 +160,13 @@ impl Code {
         use Code::*;
         match self {
             Startup | Shutdown => "Application lifecycle event.",
-            DecodeFailed => "An image could not be decoded. It may be corrupt, truncated or an unsupported variant.",
+            DecodeFailed => {
+                "An image could not be decoded. It may be corrupt, truncated or an unsupported variant."
+            }
             UnsupportedFormat => "The file format or bit depth is not supported.",
-            ResourceLimit => "A safety limit (dimensions, pixels, memory, file size) stopped processing.",
+            ResourceLimit => {
+                "A safety limit (dimensions, pixels, memory, file size) stopped processing."
+            }
             EditFailed => "An edit could not be applied; the original is unchanged.",
             ExportFailed => "Writing the exported file failed. No existing file was overwritten.",
             ExportBlocked => "Final verification found unresolved findings and export was blocked.",
@@ -150,7 +174,9 @@ impl Code {
             MetadataFound => "Source metadata was found (it is never copied to exports).",
             ScanFailed => "A privacy detector failed; results may be incomplete.",
             ScanCompleted => "A privacy scan finished.",
-            ModelIntegrity => "A model file failed hash or structure verification and was not loaded.",
+            ModelIntegrity => {
+                "A model file failed hash or structure verification and was not loaded."
+            }
             ModelUnavailable => "A feature needs a model that is not installed.",
             ProjectSaved => "Project saved atomically.",
             ProjectSaveFailed => "Saving failed; the previous valid project file was kept.",
@@ -160,7 +186,9 @@ impl Code {
             Panic => "An internal error stopped an operation. No memory dump was collected.",
             FileAccess => "A file could not be read or written.",
             Database => "The local catalog database reported an error.",
-            SecurityEvent => "A safety rule rejected input (symbolic link, path, size, untrusted model).",
+            SecurityEvent => {
+                "A safety rule rejected input (symbolic link, path, size, untrusted model)."
+            }
             SlowOperation => "An operation exceeded its expected duration.",
             BatchItemFailed => "One batch item failed; the rest of the batch continued.",
             GpuUnavailable => "GPU acceleration is not available; the CPU path is used.",
@@ -171,10 +199,34 @@ impl Code {
     pub fn lookup(id: &str) -> Option<Self> {
         use Code::*;
         [
-            Startup, Shutdown, DecodeFailed, UnsupportedFormat, ResourceLimit, EditFailed, ExportFailed, ExportBlocked,
-            ExportVerified, MetadataFound, ScanFailed, ScanCompleted, ModelIntegrity, ModelUnavailable, ProjectSaved,
-            ProjectSaveFailed, ProjectRecovered, ProjectCorrupt, UncleanShutdown, Panic, FileAccess, Database,
-            SecurityEvent, SlowOperation, BatchItemFailed, GpuUnavailable, RawPreview, Other,
+            Startup,
+            Shutdown,
+            DecodeFailed,
+            UnsupportedFormat,
+            ResourceLimit,
+            EditFailed,
+            ExportFailed,
+            ExportBlocked,
+            ExportVerified,
+            MetadataFound,
+            ScanFailed,
+            ScanCompleted,
+            ModelIntegrity,
+            ModelUnavailable,
+            ProjectSaved,
+            ProjectSaveFailed,
+            ProjectRecovered,
+            ProjectCorrupt,
+            UncleanShutdown,
+            Panic,
+            FileAccess,
+            Database,
+            SecurityEvent,
+            SlowOperation,
+            BatchItemFailed,
+            GpuUnavailable,
+            RawPreview,
+            Other,
         ]
         .into_iter()
         .find(|c| c.id().eq_ignore_ascii_case(id.trim()))
@@ -207,15 +259,26 @@ pub fn sanitize(input: &str) -> String {
         // Strip control and bidi characters (log injection, terminal escapes).
         let word: String = raw
             .chars()
-            .filter(|c| !c.is_control() && !('\u{202a}'..='\u{202e}').contains(c) && !('\u{2066}'..='\u{2069}').contains(c))
+            .filter(|c| {
+                !c.is_control()
+                    && !('\u{202a}'..='\u{202e}').contains(c)
+                    && !('\u{2066}'..='\u{2069}').contains(c)
+            })
             .collect();
         if word.is_empty() {
             continue;
         }
         let lower = word.to_ascii_lowercase();
-        let masked = if word.contains('\\') || word.contains('/') && (word.matches('/').count() >= 2 || word.starts_with('/')) {
-            match Path::new(word.trim_matches(|c: char| "\"'(),:;".contains(c))).extension().and_then(|e| e.to_str()) {
-                Some(ext) if ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric()) => format!("<path .{}>", ext.to_ascii_lowercase()),
+        let masked = if word.contains('\\')
+            || word.contains('/') && (word.matches('/').count() >= 2 || word.starts_with('/'))
+        {
+            match Path::new(word.trim_matches(|c: char| "\"'(),:;".contains(c)))
+                .extension()
+                .and_then(|e| e.to_str())
+            {
+                Some(ext) if ext.len() <= 5 && ext.chars().all(|c| c.is_ascii_alphanumeric()) => {
+                    format!("<path .{}>", ext.to_ascii_lowercase())
+                }
                 _ => "<path>".into(),
             }
         } else if lower.contains("://") || lower.starts_with("www.") {
@@ -226,7 +289,13 @@ pub fn sanitize(input: &str) -> String {
             "<number>".into()
         } else if word.len() >= 20 && looks_random(&word) {
             "<token>".into()
-        } else if ["password", "passwd", "secret", "token", "apikey", "api_key", "otpauth", "wifi:"].iter().any(|k| lower.contains(k)) && (word.contains('=') || word.contains(':')) {
+        } else if [
+            "password", "passwd", "secret", "token", "apikey", "api_key", "otpauth", "wifi:",
+        ]
+        .iter()
+        .any(|k| lower.contains(k))
+            && (word.contains('=') || word.contains(':'))
+        {
             "<credential>".into()
         } else {
             word.chars().take(64).collect()
@@ -242,7 +311,9 @@ fn looks_random(s: &str) -> bool {
     let alnum = s.chars().filter(|c| c.is_ascii_alphanumeric()).count();
     let digits = s.chars().filter(|c| c.is_ascii_digit()).count();
     let upper = s.chars().filter(|c| c.is_ascii_uppercase()).count();
-    alnum * 10 >= s.len() * 8 && (digits > 0 || upper > 2) && !s.chars().all(|c| c.is_ascii_lowercase())
+    alnum * 10 >= s.len() * 8
+        && (digits > 0 || upper > 2)
+        && !s.chars().all(|c| c.is_ascii_lowercase())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -257,7 +328,13 @@ pub struct Config {
 }
 impl Default for Config {
     fn default() -> Self {
-        Self { directory: None, min_level: Level::Info, max_file_bytes: 1 << 20, max_total_bytes: 8 << 20, retention_days: 14 }
+        Self {
+            directory: None,
+            min_level: Level::Info,
+            max_file_bytes: 1 << 20,
+            max_total_bytes: 8 << 20,
+            retention_days: 14,
+        }
     }
 }
 
@@ -281,7 +358,10 @@ fn state() -> &'static Mutex<State> {
     })
 }
 fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 fn lock() -> std::sync::MutexGuard<'static, State> {
     state().lock().unwrap_or_else(|p| p.into_inner())
@@ -388,13 +468,19 @@ fn active(dir: &Path) -> PathBuf {
 }
 fn write_line(dir: &Path, r: &Record, max: u64) {
     let path = active(dir);
-    if std::fs::metadata(&path).map(|m| m.len() >= max).unwrap_or(false) {
+    if std::fs::metadata(&path)
+        .map(|m| m.len() >= max)
+        .unwrap_or(false)
+    {
         let rotated = dir.join(format!("photo-defense-{}.log", r.ts_ms));
         let _ = std::fs::rename(&path, rotated);
         prune();
     }
     if let Ok(line) = serde_json::to_string(r)
-        && let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path)
+        && let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
     {
         let _ = writeln!(f, "{line}");
     }
@@ -404,10 +490,15 @@ fn write_line(dir: &Path, r: &Record, max: u64) {
 pub fn prune() {
     let c = config();
     let Some(dir) = c.directory else { return };
-    let Ok(rd) = std::fs::read_dir(&dir) else { return };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return;
+    };
     let mut files: Vec<(PathBuf, u64, SystemTime)> = rd
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with("photo-defense") && e.file_name().to_string_lossy().ends_with(".log"))
+        .filter(|e| {
+            e.file_name().to_string_lossy().starts_with("photo-defense")
+                && e.file_name().to_string_lossy().ends_with(".log")
+        })
         .filter_map(|e| {
             let m = std::fs::symlink_metadata(e.path()).ok()?;
             (m.is_file()).then(|| (e.path(), m.len(), m.modified().unwrap_or(UNIX_EPOCH)))
@@ -434,7 +525,10 @@ pub fn clear() -> usize {
     {
         for e in rd.filter_map(|e| e.ok()) {
             let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with("photo-defense") && name.ends_with(".log") && std::fs::remove_file(e.path()).is_ok() {
+            if name.starts_with("photo-defense")
+                && name.ends_with(".log")
+                && std::fs::remove_file(e.path()).is_ok()
+            {
                 n += 1;
             }
         }
@@ -448,7 +542,11 @@ pub fn recent(min: Level, component: Option<Component>, search: &str) -> Vec<Rec
     s.ring
         .iter()
         .filter(|r| r.level >= min && component.is_none_or(|c| r.component == c))
-        .filter(|r| q.is_empty() || r.description.to_ascii_lowercase().contains(&q) || r.code.to_ascii_lowercase().contains(&q))
+        .filter(|r| {
+            q.is_empty()
+                || r.description.to_ascii_lowercase().contains(&q)
+                || r.code.to_ascii_lowercase().contains(&q)
+        })
         .cloned()
         .collect()
 }
@@ -468,7 +566,10 @@ pub fn report(extra: &[(&str, String)]) -> String {
     }
     s.push_str(&format!("\nwarnings and errors ({}):\n", records.len()));
     for r in records.iter().rev().take(200) {
-        s.push_str(&format!("{} {:?} {:?} {} {}\n", r.ts_ms, r.level, r.component, r.code, r.description));
+        s.push_str(&format!(
+            "{} {:?} {:?} {} {}\n",
+            r.ts_ms, r.level, r.component, r.code, r.description
+        ));
     }
     s.push_str("\nThis report contains no images, paths, OCR text, code payloads or credentials. Review it before sharing.\n");
     s
@@ -479,8 +580,23 @@ pub fn report(extra: &[(&str, String)]) -> String {
 pub fn install_panic_hook(marker: Option<PathBuf>) {
     let prev = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let location = info.location().map(|l| format!("{}:{}", l.file().rsplit(['/', '\\']).next().unwrap_or(""), l.line())).unwrap_or_default();
-        event(Level::Critical, Component::App, Code::Panic, &format!("internal error at {location}")).emit();
+        let location = info
+            .location()
+            .map(|l| {
+                format!(
+                    "{}:{}",
+                    l.file().rsplit(['/', '\\']).next().unwrap_or(""),
+                    l.line()
+                )
+            })
+            .unwrap_or_default();
+        event(
+            Level::Critical,
+            Component::App,
+            Code::Panic,
+            &format!("internal error at {location}"),
+        )
+        .emit();
         if let Some(m) = &marker {
             let _ = std::fs::write(m, format!("{}\n", now_ms()));
         }
@@ -495,10 +611,16 @@ mod tests {
     #[test]
     fn sanitizer_removes_private_values_and_injection() {
         let cases = [
-            ("failed to open C:\\Users\\alice\\Pictures\\passport.jpg", "alice"),
+            (
+                "failed to open C:\\Users\\alice\\Pictures\\passport.jpg",
+                "alice",
+            ),
             ("failed /home/bob/secret-trip/IMG_0001.CR2", "bob"),
             ("card 4111111111111111 rejected", "4111111111111111"),
-            ("token ghp_AbCdEf0123456789AbCdEf0123456789AbCd leaked", "ghp_AbCd"),
+            (
+                "token ghp_AbCdEf0123456789AbCdEf0123456789AbCd leaked",
+                "ghp_AbCd",
+            ),
             ("password=hunter2-example in qr", "hunter2"),
             ("otpauth://totp/x?secret=JBSWY3DPEHPK3PXP", "JBSWY3DP"),
             ("contact someone@example.com", "someone@example.com"),
@@ -509,24 +631,51 @@ mod tests {
             assert!(!out.contains(secret), "{input} -> {out}");
         }
         let injected = sanitize("ok\n{\"level\":\"Critical\"}\r\x1b[31mred\u{202e}");
-        assert!(!injected.contains('\n') && !injected.contains('\x1b') && !injected.contains('\u{202e}'));
+        assert!(
+            !injected.contains('\n')
+                && !injected.contains('\x1b')
+                && !injected.contains('\u{202e}')
+        );
         assert!(sanitize(&"x".repeat(5000)).len() <= MAX_DESCRIPTION);
-        assert_eq!(sanitize("Decoder rejected header"), "Decoder rejected header");
+        assert_eq!(
+            sanitize("Decoder rejected header"),
+            "Decoder rejected header"
+        );
         assert_eq!(sanitize("bad file a/b/c.png"), "bad file <path .png>");
     }
     #[test]
     fn file_logging_rotation_ring_and_clear() {
         let d = tempfile::tempdir().unwrap();
-        configure(Config { directory: Some(d.path().into()), min_level: Level::Debug, max_file_bytes: 600, max_total_bytes: 2000, retention_days: 1 });
+        configure(Config {
+            directory: Some(d.path().into()),
+            min_level: Level::Debug,
+            max_file_bytes: 600,
+            max_total_bytes: 2000,
+            retention_days: 1,
+        });
         for i in 0..40 {
-            event(Level::Warning, Component::Decode, Code::DecodeFailed, &format!("attempt {i} for /home/carol/x.jpg")).job(new_job()).duration(std::time::Duration::from_millis(3)).emit();
+            event(
+                Level::Warning,
+                Component::Decode,
+                Code::DecodeFailed,
+                &format!("attempt {i} for /home/carol/x.jpg"),
+            )
+            .job(new_job())
+            .duration(std::time::Duration::from_millis(3))
+            .emit();
         }
         event(Level::Trace, Component::App, Code::Other, "below threshold").emit();
         let files: Vec<_> = std::fs::read_dir(d.path()).unwrap().collect();
         assert!(files.len() >= 2, "rotated");
-        let total: u64 = std::fs::read_dir(d.path()).unwrap().map(|e| e.unwrap().metadata().unwrap().len()).sum();
+        let total: u64 = std::fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| e.unwrap().metadata().unwrap().len())
+            .sum();
         assert!(total <= 2000 + 600);
-        let all: String = std::fs::read_dir(d.path()).unwrap().map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap()).collect();
+        let all: String = std::fs::read_dir(d.path())
+            .unwrap()
+            .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+            .collect();
         assert!(!all.contains("carol") && !all.contains("below threshold"));
         for line in all.lines() {
             let r: Record = serde_json::from_str(line).unwrap();

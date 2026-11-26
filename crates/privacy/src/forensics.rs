@@ -34,14 +34,16 @@ pub struct ForensicReport {
 }
 
 const STD_LUMA: [u16; 64] = [
-    16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14, 13, 16, 24, 40, 57, 69, 56, 14, 17, 22, 29, 51, 87, 80, 62, 18, 22, 37, 56, 68, 109, 103, 77, 24,
-    35, 55, 64, 81, 104, 113, 92, 49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99,
+    16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55, 14, 13, 16, 24, 40, 57, 69, 56,
+    14, 17, 22, 29, 51, 87, 80, 62, 18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81, 104, 113,
+    92, 49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100, 103, 99,
 ];
 
 /// DQT tables are stored in zig-zag order; maps zig-zag position to natural (row-major) index.
 const ZIGZAG: [usize; 64] = [
-    0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23,
-    30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
+    0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48, 41, 34, 27, 20,
+    13, 6, 7, 14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51, 58, 59,
+    52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
 ];
 
 fn jpeg_info(b: &[u8]) -> Option<JpegInfo> {
@@ -60,7 +62,9 @@ fn jpeg_info(b: &[u8]) -> Option<JpegInfo> {
             break;
         }
         let len = u16::from_be_bytes([b[i + 2], b[i + 3]]) as usize;
-        let Some(seg) = b.get(i + 4..i + 2 + len) else { break };
+        let Some(seg) = b.get(i + 4..i + 2 + len) else {
+            break;
+        };
         match m {
             0xc2 => progressive = true,
             0xdb => {
@@ -69,27 +73,36 @@ fn jpeg_info(b: &[u8]) -> Option<JpegInfo> {
                     let pq = seg[k] >> 4;
                     let id = seg[k] & 15;
                     let n = if pq == 0 { 64 } else { 128 };
-                    let Some(t) = seg.get(k + 1..k + 1 + n) else { break };
+                    let Some(t) = seg.get(k + 1..k + 1 + n) else {
+                        break;
+                    };
                     tables += 1;
                     if id == 0 && pq == 0 && q.is_none() {
-                        let ratio: f64 = t.iter().zip(ZIGZAG).map(|(&v, z)| f64::from(v) * 100. / f64::from(STD_LUMA[z])).sum::<f64>() / 64.;
-                        let quality = if ratio <= 100. { (200. - ratio) / 2. } else { 5000. / ratio };
+                        let ratio: f64 = t
+                            .iter()
+                            .zip(ZIGZAG)
+                            .map(|(&v, z)| f64::from(v) * 100. / f64::from(STD_LUMA[z]))
+                            .sum::<f64>()
+                            / 64.;
+                        let quality = if ratio <= 100. {
+                            (200. - ratio) / 2.
+                        } else {
+                            5000. / ratio
+                        };
                         q = Some(quality.clamp(1., 100.).round() as u8);
                     }
                     k += 1 + n;
                 }
             }
-            0xc0 | 0xc1 => {
-                if seg.len() >= 9 && seg[5] >= 3 {
-                    let h = seg[7] >> 4;
-                    let v = seg[7] & 15;
-                    sub = Some(match (h, v) {
-                        (1, 1) => "4:4:4".into(),
-                        (2, 1) => "4:2:2".into(),
-                        (2, 2) => "4:2:0".into(),
-                        _ => format!("{h}x{v}"),
-                    });
-                }
+            0xc0 | 0xc1 if seg.len() >= 9 && seg[5] >= 3 => {
+                let h = seg[7] >> 4;
+                let v = seg[7] & 15;
+                sub = Some(match (h, v) {
+                    (1, 1) => "4:4:4".into(),
+                    (2, 1) => "4:2:2".into(),
+                    (2, 2) => "4:2:0".into(),
+                    _ => format!("{h}x{v}"),
+                });
             }
             _ => {}
         }
@@ -99,7 +112,12 @@ fn jpeg_info(b: &[u8]) -> Option<JpegInfo> {
         }
         i += 2 + len;
     }
-    Some(JpegInfo { progressive, quant_tables: tables, estimated_quality: q, chroma_subsampling: sub })
+    Some(JpegInfo {
+        progressive,
+        quant_tables: tables,
+        estimated_quality: q,
+        chroma_subsampling: sub,
+    })
 }
 
 fn c2pa_status(b: &[u8]) -> String {
@@ -118,7 +136,14 @@ pub fn inspect(bytes: &[u8]) -> ForensicReport {
     let (mut gps, mut thumb, mut software) = (false, None, None);
     if let Ok(e) = exif::Reader::new().read_from_container(&mut std::io::Cursor::new(bytes)) {
         for f in e.fields().take(500) {
-            let v: String = f.display_value().with_unit(&e).to_string().chars().filter(|c| !c.is_control()).take(120).collect();
+            let v: String = f
+                .display_value()
+                .with_unit(&e)
+                .to_string()
+                .chars()
+                .filter(|c| !c.is_control())
+                .take(120)
+                .collect();
             if f.tag.to_string().starts_with("GPS") {
                 gps = true;
             }
@@ -133,10 +158,15 @@ pub fn inspect(bytes: &[u8]) -> ForensicReport {
             exif_fields.push((format!("{} ({})", f.tag, f.ifd_num), v));
         }
     }
-    let icc = meta.findings.iter().any(|f| f.category == crate::Category::IccProfile);
+    let icc = meta
+        .findings
+        .iter()
+        .any(|f| f.category == crate::Category::IccProfile);
     let mut indicators = vec![];
     if let Some(s) = &software {
-        indicators.push(format!("Software tag names an application: \"{s}\" (files are often re-saved legitimately)"));
+        indicators.push(format!(
+            "Software tag names an application: \"{s}\" (files are often re-saved legitimately)"
+        ));
     }
     let jpeg = jpeg_info(bytes);
     if let Some(j) = &jpeg
@@ -149,7 +179,10 @@ pub fn inspect(bytes: &[u8]) -> ForensicReport {
     }
     let fp = |b: &[u8]| {
         use sha2::Digest;
-        (format!("{:x}", sha2::Sha256::digest(b)), blake3::hash(b).to_hex().to_string())
+        (
+            format!("{:x}", sha2::Sha256::digest(b)),
+            blake3::hash(b).to_hex().to_string(),
+        )
     };
     let (sha256, b3) = fp(bytes);
     ForensicReport {
@@ -177,7 +210,9 @@ mod tests {
     fn jpeg_quality_estimate_and_structure() {
         for q in [50u8, 75, 90] {
             let mut c = std::io::Cursor::new(vec![]);
-            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut c, q).encode_image(&image::DynamicImage::new_rgb8(32, 32)).unwrap();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut c, q)
+                .encode_image(&image::DynamicImage::new_rgb8(32, 32))
+                .unwrap();
             let r = inspect(&c.into_inner());
             let est = r.jpeg.unwrap().estimated_quality.unwrap();
             assert!(est.abs_diff(q) <= 3, "q {q} est {est}");
@@ -191,6 +226,10 @@ mod tests {
         let _ = inspect(&[]);
         let mut fake = b"\x89PNG\r\n\x1a\n".to_vec();
         fake.extend_from_slice(b"....caBX....");
-        assert!(inspect(&fake).c2pa.contains("NOT cryptographically verified"));
+        assert!(
+            inspect(&fake)
+                .c2pa
+                .contains("NOT cryptographically verified")
+        );
     }
 }

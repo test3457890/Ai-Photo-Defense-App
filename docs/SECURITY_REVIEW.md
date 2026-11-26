@@ -45,3 +45,13 @@ CLI export image and sidecar publication are separate; an image can be saved whe
 - No `unsafe` code in workspace crates.
 - `cargo audit`: no vulnerabilities. Informational: RUSTSEC-2026-0543 chrono unmaintained (new, via rxing; no fixed release), lru unsound advisories via the Iced text stack (pre-existing), several unmaintained transitive crates (pre-existing). `cargo deny check` passes with the new deny.toml.
 - Open items: fuzzing harness, decoder sandboxing/process isolation, Windows junction test, split model local-use vs redistribution approval.
+
+
+## Part 3 review (2026-11-26)
+
+- New untrusted inputs: RAW containers (bounded IFD walk with loop detection, offset/length checks, candidate cap, previews decoded under the standard limits), .cube LUTs (16 MiB cap, size 2..65, finite values, exact entry count), project files (64 MiB cap, schema and field validation, symlink refusal), catalog queries (parameterised SQL with escaped LIKE patterns; column names allow-listed).
+- Logging: closed schema, sanitiser for paths/numbers/tokens/URLs/e-mails/credentials, control and bidi characters stripped, local only, rotation and caps, no memory dumps. Tests use synthetic secrets.
+- Crash recovery never replaces valid data with invalid data: backups and checkpoints are only taken from files that parse and validate.
+- Thumbnail cache is off by default; clearing overwrites with zeros before deletion (SSD and snapshot limitations documented).
+- Vulnerability found and fixed: rusqlite 0.38's bundled SQLite (RUSTSEC-2026-0459, medium) replaced by rusqlite 0.43 before any release. `cargo audit` and `cargo deny check` pass.
+- Still open: fuzzing, decoder process isolation, signed updates (no updater exists), font parsing (no text layers yet).

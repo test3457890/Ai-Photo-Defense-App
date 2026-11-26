@@ -160,3 +160,49 @@ Implementation, compilation and verification are different things. "Tested" name
 | Requirement | Status |
 |---|---|
 | Signed installers (MSI/EXE, DMG, AppImage/DEB/RPM) | Blocked: no signing credentials, runtime testing incomplete. CI artifacts are unsigned development builds. |
+
+## Part 3
+
+Increment started from `7b0e8b22b11b7191632974552298ec539e5ac51a` (Part 2 branch, PR #7 open, not merged). Specification: [PART3_SPECIFICATION.md](PART3_SPECIFICATION.md). Same status vocabulary as above; nothing is "Independently verified" yet.
+
+| Requirement (section) | Status | Evidence / gap |
+|---|---|---|
+| Review of Parts 1-2, launch and screenshot old UI (3) | Tested | HANDOFF.md, docs/design/PART3_DESIGN.md |
+| GUI redesign, three distinct modes (5-7) | Tested (Windows 10) | screenshots/part3-*.png; design doc |
+| Menus, toolbar, collapsible groups, dockable/resizable panes, status bar, shortcuts, fullscreen (6) | Tested (Windows 10) | pane_grid resize/drag/maximise; F11 |
+| Context menus | Incomplete | Right-click on filmstrip toggles flag only |
+| Accessibility (screen readers), multi-monitor | Blocked / not tested | Iced 0.13 has no AccessKit |
+| Light/dark themes, high-DPI (125%), window sizes (9) | Tested (Windows 10) | |
+| Framework evaluation (8) | Implemented | Iced kept; egui/Slint compared |
+| Crop, resize, rotate, straighten, flip, perspective (4-point), lens (1-parameter), canvas resize, custom ratios (10) | Tested | edit unit tests; GUI Geometry group |
+| Image alignment, automatic object/subject/background selection | Blocked | Needs segmentation model |
+| Rect, ellipse, polygon, lasso, brush, gradient, radial masks drawable in GUI (10) | Tested (Windows 10, rect) / Implemented (others) | Overlay rasterised; masks unit-tested |
+| Mask refinement, layer masks, colour-range and luminance masks (10, 12, 14) | Tested (engine) | GUI exposes selection/gradient/radial masks; colour range/luminance in engine and recipes only |
+| Undo/redo, history, before/after, split view (10) | Tested | |
+| All §11 adjustments, global or masked, float precision, linear-light WB/exposure | Tested | color.rs tests; GUI sliders |
+| Curves (master parametric in GUI; master + R/G/B in engine), HSL 8 bands, split toning/grading, colour balance, LUT import/export, presets (12) | Tested | .cube parser hostile-input tests |
+| Colour wheels, selective colour UI, profile conversion, HDR, scopes beyond histogram | Not started | |
+| Histogram, clipping warnings/overlay, pixel inspection (12) | Tested (Windows 10) | |
+| RAW: identification + embedded preview for DNG/CR2/CR3/NEF/ARW/RAF/ORF/RW2/PEF (13) | Tested (synthetic files only) | CAMERA_COMPATIBILITY.md |
+| RAW decoding/demosaic/camera and lens profiles | Blocked | LGPL decoders need owner licensing decision |
+| Layers: adjustment, redaction, shape, visibility, opacity, blend, ordering, delete, flatten on export (14) | Tested | Redaction layers forced above adjustments |
+| Text layers, layer groups, locking, duplication, merging | Not started | Fonts are an untrusted-input surface; deferred |
+| Intelligent editing (15) | Incomplete | Auto exposure/WB (deterministic) only; others blocked on models |
+| Privacy Scan: uncertain vs confirmed separated (16) | Tested (Windows 10) | Detection model improvements blocked |
+| High-assurance export pre-review + post-verify (17) | Tested | pre_export_review; verify; GUI blocks |
+| C2PA / authenticity verification | Not started | Detected only, reported unverified |
+| Media Manager: SQLite catalog, albums, tags, ratings, search, filters, duplicates, missing files, optional cache with secure clear (18) | Tested (engine), Implemented (GUI subset) | GUI: search, rating filter, tag, open from catalog |
+| Portable projects / archiving | Not started | |
+| Batch: existing Part 2 batch + colour/crop recipes via CLI (19) | Implemented | Batch watermarking/AI protection not available |
+| Structured logger, allowlisted fields, sanitisation, rotation, retention, caps, clear, report (21-22) | Tested | log tests use synthetic secrets |
+| Diagnostics Center (23) | Tested (Windows 10) | |
+| Autosave, atomic saves, backups, checkpoints, unclean-shutdown detection, restore banner, safe mode, temp cleanup (24) | Tested | project tests; forced kill observed in GUI |
+| Disk-exhaustion, GPU and model failure recovery tests | Not started | |
+| Performance Center with real sysinfo data (25) | Tested (Windows 10) | GPU shown as not used |
+| Optimisation: parallel colour stage, proxy rendering, bounded proxy cache (26) | Tested | BENCHMARKS.md |
+| GPU acceleration, SIMD intrinsics, 8 GB test | Not started | |
+| Forensic inspection (27) | Tested | JPEG quality estimate tests |
+| Security hardening: hostile RAW/LUT/project/catalog inputs, SQL parameterisation, log injection (28) | Tested | Fuzz harness still not started |
+| Competitive benchmarking (29) | Blocked | Competing apps not available; no claim made |
+| Cross-platform runtime (30) | Incomplete | Windows only |
+| Signed releases | Blocked | No signing credentials |

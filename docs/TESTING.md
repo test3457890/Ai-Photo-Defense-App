@@ -1,5 +1,12 @@
 # Testing and evaluation
 
+## Part 3 (Windows 10, 2026-11-26)
+
+73 tests pass (`cargo test --locked --workspace`), 74 with `--all-features`. New coverage: colour pipeline (identity is lossless, linear-light exposure maths, control directions, monotone curves, HSL round-trip, band weights, LUT bake/parse round-trip and hostile .cube files, histogram/clipping, auto tone, presets), layers (opacity, gradient/radial/colour/luminance masks, blend modes, identity homography, degenerate corners, lens, canvas), redaction-above-adjustment ordering, proxy rendering equivalence, RAW previews (DNG, NEF, RAF, CR3 synthetic files, IFD loops, truncation), forensic JPEG quality estimates and C2PA detection, catalog filters/duplicates/missing files/SQL metacharacters/cache clearing, project save/backup/checkpoints/corruption fallback/autosave/unclean shutdown/temp cleanup, logger sanitisation/rotation/caps/report/clear with synthetic secrets, overlay and histogram rasterisation.
+
+Real-application testing is recorded in `docs/design/PART3_DESIGN.md` with screenshots. Not tested: macOS, Linux, 8 GB systems, disk exhaustion, GPU failures, screen readers, multiple monitors.
+
+
 ## 0.2 increment (Windows 10, 2026-11-26)
 
 46 automated tests pass with default features (`cargo test --locked --workspace`) and 47 with `--all-features` (adds the CLIP gradient test): edit geometry, undo/redo, straighten bounds, every selection shape, secure redaction pixel replacement, visual concealment, inverted selections, transparency flattening, recipe limits; metadata inspection of clean encoder output and injected EXIF/XMP/IPTC/comments/PNG text/ICC/trailing images; hostile container inputs; QR detection, classification and tiling for small codes; checksum-validated identifiers (Luhn, IBAN, ABA, ICAO MRZ, SIN); credential and network rules; country rules; values never serialized; profile round-trips and evidence thresholds; pipeline blocking of unredacted credential codes, verified redaction in the reopened PNG and JPEG; batch collection, recursion, exclusion, limits, Unix symlink refusal, review queue, duplicates, errors, cancellation, folder monitor; CLI scan/process/batch/profiles.

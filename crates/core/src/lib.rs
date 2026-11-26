@@ -39,7 +39,13 @@ pub struct Photo {
 impl Photo {
     /// Same source (hash, bytes, RAW status) with different pixels, e.g. after edits.
     pub fn with_pixels(&self, pixels: DynamicImage) -> Photo {
-        Photo { pixels, fingerprint: self.fingerprint.clone(), format: self.format, bytes: self.bytes.clone(), raw: self.raw }
+        Photo {
+            pixels,
+            fingerprint: self.fingerprint.clone(),
+            format: self.format,
+            bytes: self.bytes.clone(),
+            raw: self.raw,
+        }
     }
 }
 /// Uses one bounded byte snapshot, avoiding a dimensions/decode path replacement race.
@@ -51,11 +57,15 @@ pub fn load(path: &Path) -> Result<Photo> {
         "Input exceeds 256 MiB"
     );
     let mut bytes = Vec::new();
-    file.take(MAX_FILE_BYTES.max(raw::MAX_RAW_BYTES) + 1).read_to_end(&mut bytes)?;
+    file.take(MAX_FILE_BYTES.max(raw::MAX_RAW_BYTES) + 1)
+        .read_to_end(&mut bytes)?;
     let ext = path.extension().and_then(|e| e.to_str());
     let (pixels, format, raw) = match raw::identify(&bytes, ext) {
         Some(_) => {
-            ensure!(bytes.len() as u64 <= raw::MAX_RAW_BYTES, "RAW file exceeds 256 MiB");
+            ensure!(
+                bytes.len() as u64 <= raw::MAX_RAW_BYTES,
+                "RAW file exceeds 256 MiB"
+            );
             let preview = raw::extract_preview(&bytes, ext)?;
             let (pixels, format) = decode_bounded(&preview.jpeg)?;
             (pixels, format, Some(preview.kind))

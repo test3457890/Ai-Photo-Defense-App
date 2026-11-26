@@ -207,13 +207,26 @@ pub enum Operation {
     },
     /// Shape layer: colour fill of a selection. Opaque fills are not treated as redaction
     /// unless created as a Conceal operation.
-    Fill { selection: Selection, rgba: [u8; 4] },
+    Fill {
+        selection: Selection,
+        rgba: [u8; 4],
+    },
     /// Maps the quadrilateral TL, TR, BR, BL onto an upright rectangle.
-    Perspective { corners: [(f32, f32); 4], width: u32, height: u32 },
+    Perspective {
+        corners: [(f32, f32); 4],
+        width: u32,
+        height: u32,
+    },
     /// One-parameter radial distortion correction (not a lens profile).
-    LensDistortion { k1: f32 },
+    LensDistortion {
+        k1: f32,
+    },
     /// Centred canvas resize with an opaque fill colour.
-    Canvas { width: u32, height: u32, fill: [u8; 3] },
+    Canvas {
+        width: u32,
+        height: u32,
+        fill: [u8; 3],
+    },
 }
 fn one() -> f32 {
     1.
@@ -251,26 +264,64 @@ impl Operation {
                     ""
                 }
             ),
-            Self::Adjust { name, mask, visible, opacity, blend, .. } => format!(
+            Self::Adjust {
+                name,
+                mask,
+                visible,
+                opacity,
+                blend,
+                ..
+            } => format!(
                 "{}{}{}{}{}",
-                if name.is_empty() { "Adjustment layer" } else { name },
-                mask.as_ref().map(|m| format!(" ({})", m.label())).unwrap_or_default(),
-                if *opacity < 1. { format!(" {:.0}%", opacity * 100.) } else { String::new() },
-                if *blend != BlendMode::Normal { format!(" {blend}") } else { String::new() },
+                if name.is_empty() {
+                    "Adjustment layer"
+                } else {
+                    name
+                },
+                mask.as_ref()
+                    .map(|m| format!(" ({})", m.label()))
+                    .unwrap_or_default(),
+                if *opacity < 1. {
+                    format!(" {:.0}%", opacity * 100.)
+                } else {
+                    String::new()
+                },
+                if *blend != BlendMode::Normal {
+                    format!(" {blend}")
+                } else {
+                    String::new()
+                },
                 if *visible { "" } else { " [hidden]" }
             ),
-            Self::Fill { selection, rgba } => format!("Shape fill #{:02x}{:02x}{:02x} {}", rgba[0], rgba[1], rgba[2], selection.label()),
-            Self::Perspective { width, height, .. } => format!("Perspective correction to {width}x{height}"),
+            Self::Fill { selection, rgba } => format!(
+                "Shape fill #{:02x}{:02x}{:02x} {}",
+                rgba[0],
+                rgba[1],
+                rgba[2],
+                selection.label()
+            ),
+            Self::Perspective { width, height, .. } => {
+                format!("Perspective correction to {width}x{height}")
+            }
             Self::LensDistortion { k1 } => format!("Lens distortion {k1:+.3}"),
             Self::Canvas { width, height, .. } => format!("Canvas {width}x{height}"),
         }
     }
     /// Geometry operations change pixel coordinates; redaction regions cannot be carried across them.
     pub fn is_geometry(&self) -> bool {
-        !matches!(self, Self::Conceal { .. } | Self::Adjust { .. } | Self::Fill { .. })
+        !matches!(
+            self,
+            Self::Conceal { .. } | Self::Adjust { .. } | Self::Fill { .. }
+        )
     }
     pub fn is_secure_redaction(&self) -> bool {
-        matches!(self, Self::Conceal { method: Concealment::Solid { .. }, .. })
+        matches!(
+            self,
+            Self::Conceal {
+                method: Concealment::Solid { .. },
+                ..
+            }
+        )
     }
     fn apply(&self, img: RgbaImage) -> Result<RgbaImage> {
         let (w, h) = img.dimensions();
@@ -324,7 +375,15 @@ impl Operation {
                 conceal(&mut img, &m, *method);
                 img
             }
-            Self::Adjust { adjustments, mask, invert, opacity, blend, visible, .. } => {
+            Self::Adjust {
+                adjustments,
+                mask,
+                invert,
+                opacity,
+                blend,
+                visible,
+                ..
+            } => {
                 if !*visible || adjustments.is_identity() {
                     img
                 } else {
@@ -336,9 +395,17 @@ impl Operation {
                 layers::fill(&mut img, selection, *rgba)?;
                 img
             }
-            Self::Perspective { corners, width, height } => layers::perspective(&img, *corners, *width, *height)?,
+            Self::Perspective {
+                corners,
+                width,
+                height,
+            } => layers::perspective(&img, *corners, *width, *height)?,
             Self::LensDistortion { k1 } => layers::lens_correct(&img, *k1)?,
-            Self::Canvas { width, height, fill } => layers::canvas(&img, *width, *height, *fill)?,
+            Self::Canvas {
+                width,
+                height,
+                fill,
+            } => layers::canvas(&img, *width, *height, *fill)?,
         })
     }
 }
@@ -501,8 +568,15 @@ pub fn flatten(img: RgbaImage) -> DynamicImage {
 fn validate_op(op: &Operation) -> Result<()> {
     match op {
         Operation::Conceal { method, .. } => method.validate(),
-        Operation::Adjust { adjustments, opacity, .. } => {
-            ensure!(opacity.is_finite() && (0.0..=1.0).contains(opacity), "Opacity must be 0..1");
+        Operation::Adjust {
+            adjustments,
+            opacity,
+            ..
+        } => {
+            ensure!(
+                opacity.is_finite() && (0.0..=1.0).contains(opacity),
+                "Opacity must be 0..1"
+            );
             adjustments.validate()
         }
         _ => Ok(()),
@@ -621,7 +695,11 @@ impl EditStack {
     }
     pub fn move_layer(&mut self, index: usize, up: bool) -> bool {
         let n = self.active_len();
-        let j = if up { index.checked_sub(1) } else { Some(index + 1) };
+        let j = if up {
+            index.checked_sub(1)
+        } else {
+            Some(index + 1)
+        };
         match j {
             Some(j) if index < n && j < n => {
                 self.operations.truncate(n);
@@ -705,17 +783,53 @@ mod tests {
     fn redaction_layers_render_above_later_adjustments() {
         let img = gradient(32, 32);
         let mut s = EditStack::new();
-        s.push(Operation::Conceal { selection: Selection::Rect(Rect::new(4, 4, 8, 8)), method: Concealment::BLACK, invert: false }).unwrap();
-        s.push(Operation::Adjust { name: "lift".into(), adjustments: Box::new(Adjustments { exposure: 2., brightness: 0.8, ..Default::default() }), mask: None, invert: false, opacity: 1., blend: BlendMode::Normal, visible: true }).unwrap();
+        s.push(Operation::Conceal {
+            selection: Selection::Rect(Rect::new(4, 4, 8, 8)),
+            method: Concealment::BLACK,
+            invert: false,
+        })
+        .unwrap();
+        s.push(Operation::Adjust {
+            name: "lift".into(),
+            adjustments: Box::new(Adjustments {
+                exposure: 2.,
+                brightness: 0.8,
+                ..Default::default()
+            }),
+            mask: None,
+            invert: false,
+            opacity: 1.,
+            blend: BlendMode::Normal,
+            visible: true,
+        })
+        .unwrap();
         let out = s.render(&img).unwrap().to_rgb8();
-        assert_eq!(out.get_pixel(6, 6), &image::Rgb([0, 0, 0]), "redaction stays opaque black");
+        assert_eq!(
+            out.get_pixel(6, 6),
+            &image::Rgb([0, 0, 0]),
+            "redaction stays opaque black"
+        );
         assert_ne!(out.get_pixel(20, 20), img.to_rgb8().get_pixel(20, 20));
         assert_eq!(s.final_redactions(&img).unwrap().unwrap().len(), 1);
         assert!(s.toggle_visible(1));
-        assert_eq!(s.render(&img).unwrap().to_rgb8().get_pixel(20, 20), img.to_rgb8().get_pixel(20, 20));
+        assert_eq!(
+            s.render(&img).unwrap().to_rgb8().get_pixel(20, 20),
+            img.to_rgb8().get_pixel(20, 20)
+        );
         assert!(s.move_layer(1, true) && s.remove(0));
         assert_eq!(s.active().len(), 1);
-        assert!(s.push(Operation::Adjust { name: String::new(), adjustments: Box::default(), mask: None, invert: false, opacity: 3., blend: BlendMode::Normal, visible: true }).is_err());
+        assert!(
+            s.push(Operation::Adjust {
+                name: String::new(),
+                adjustments: Box::default(),
+                mask: None,
+                invert: false,
+                opacity: 3.,
+                blend: BlendMode::Normal,
+                visible: true
+            })
+            .is_err()
+        );
     }
     #[test]
     fn aspect_crops() {

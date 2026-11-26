@@ -8,7 +8,9 @@
 use anyhow::{Result, bail, ensure};
 use serde::Serialize;
 
-pub const EXTENSIONS: [&str; 10] = ["dng", "cr2", "cr3", "nef", "arw", "raf", "orf", "rw2", "pef", "srw"];
+pub const EXTENSIONS: [&str; 10] = [
+    "dng", "cr2", "cr3", "nef", "arw", "raf", "orf", "rw2", "pef", "srw",
+];
 const MAX_IFDS: usize = 64;
 /// RAW files are larger than processed images; previews inside are still bounded by decode limits.
 pub const MAX_RAW_BYTES: u64 = 256 * 1024 * 1024;
@@ -91,11 +93,19 @@ impl<'a> Tiff<'a> {
     }
     fn u16(&self, i: usize) -> Option<usize> {
         let s: [u8; 2] = self.b.get(i..i.checked_add(2)?)?.try_into().ok()?;
-        Some(if self.le { u16::from_le_bytes(s) } else { u16::from_be_bytes(s) } as usize)
+        Some(if self.le {
+            u16::from_le_bytes(s)
+        } else {
+            u16::from_be_bytes(s)
+        } as usize)
     }
     fn u32(&self, i: usize) -> Option<usize> {
         let s: [u8; 4] = self.b.get(i..i.checked_add(4)?)?.try_into().ok()?;
-        Some(if self.le { u32::from_le_bytes(s) } else { u32::from_be_bytes(s) } as usize)
+        Some(if self.le {
+            u32::from_le_bytes(s)
+        } else {
+            u32::from_be_bytes(s)
+        } as usize)
     }
     /// Walks IFD0 chain and SubIFDs breadth-first; yields (tag, type, count, value-or-offset).
     fn ifds(&self) -> Vec<Vec<(usize, usize, usize, usize)>> {
@@ -110,8 +120,16 @@ impl<'a> Tiff<'a> {
             let mut entries = vec![];
             for e in 0..n.min(512) {
                 let at = off + 2 + e * 12;
-                let (Some(tag), Some(ty), Some(count)) = (self.u16(at), self.u16(at + 2), self.u32(at + 4)) else { break };
-                let value = if ty == 3 && count == 1 { self.u16(at + 8).unwrap_or(0) } else { self.u32(at + 8).unwrap_or(0) };
+                let (Some(tag), Some(ty), Some(count)) =
+                    (self.u16(at), self.u16(at + 2), self.u32(at + 4))
+                else {
+                    break;
+                };
+                let value = if ty == 3 && count == 1 {
+                    self.u16(at + 8).unwrap_or(0)
+                } else {
+                    self.u32(at + 8).unwrap_or(0)
+                };
                 if tag == 330 {
                     // SubIFDs: one inline offset or an array of offsets.
                     if count == 1 {
@@ -139,7 +157,9 @@ impl<'a> Tiff<'a> {
 }
 
 fn is_jpeg_at(b: &[u8], off: usize, len: usize) -> bool {
-    len >= 4 && off.checked_add(len).is_some_and(|end| end <= b.len()) && b[off..].starts_with(&[0xff, 0xd8, 0xff])
+    len >= 4
+        && off.checked_add(len).is_some_and(|end| end <= b.len())
+        && b[off..].starts_with(&[0xff, 0xd8, 0xff])
 }
 
 /// Returns embedded JPEG previews, largest first.
@@ -152,8 +172,17 @@ pub fn preview_candidates(b: &[u8]) -> Vec<(usize, usize)> {
             c.push((off, len));
         }
     }
-    let tiff_start = if b.starts_with(b"IIU\0") || b.starts_with(b"IIRO") || b.starts_with(b"IIRS") { Some(b"II*\0".as_slice()) } else { None };
-    let view: Option<Tiff> = if tiff_start.is_some() { Tiff::new(b).map(|t| Tiff { b: t.b, le: true }) } else { Tiff::new(b) };
+    let tiff_start = if b.starts_with(b"IIU\0") || b.starts_with(b"IIRO") || b.starts_with(b"IIRS")
+    {
+        Some(b"II*\0".as_slice())
+    } else {
+        None
+    };
+    let view: Option<Tiff> = if tiff_start.is_some() {
+        Tiff::new(b).map(|t| Tiff { b: t.b, le: true })
+    } else {
+        Tiff::new(b)
+    };
     if let Some(t) = view {
         for ifd in t.ifds() {
             let get = |tag| ifd.iter().find(|e| e.0 == tag).map(|e| e.3);
@@ -200,13 +229,22 @@ pub fn preview_candidates(b: &[u8]) -> Vec<(usize, usize)> {
 
 /// Extracts the largest embedded preview that decodes under the standard limits.
 pub fn extract_preview(b: &[u8], ext_hint: Option<&str>) -> Result<RawPreview> {
-    let Some(kind) = identify(b, ext_hint) else { bail!("Not a recognised RAW container") };
+    let Some(kind) = identify(b, ext_hint) else {
+        bail!("Not a recognised RAW container")
+    };
     let cands = preview_candidates(b);
-    ensure!(!cands.is_empty(), "No embedded preview found; full RAW decoding is not available");
+    ensure!(
+        !cands.is_empty(),
+        "No embedded preview found; full RAW decoding is not available"
+    );
     for &(off, len) in &cands {
         let jpeg = &b[off..off + len];
         if crate::decode_bounded(jpeg).is_ok() {
-            return Ok(RawPreview { kind, jpeg: jpeg.to_vec(), candidates: cands.len() });
+            return Ok(RawPreview {
+                kind,
+                jpeg: jpeg.to_vec(),
+                candidates: cands.len(),
+            });
         }
     }
     bail!("Embedded previews could not be decoded")
@@ -216,7 +254,12 @@ pub fn extract_preview(b: &[u8], ext_hint: Option<&str>) -> Result<RawPreview> {
 pub(crate) mod tests {
     use super::*;
     pub fn jpeg(w: u32, h: u32) -> Vec<u8> {
-        crate::encode(&image::DynamicImage::new_rgb8(w, h), crate::ExportFormat::Jpeg, 90).unwrap()
+        crate::encode(
+            &image::DynamicImage::new_rgb8(w, h),
+            crate::ExportFormat::Jpeg,
+            90,
+        )
+        .unwrap()
     }
     /// Minimal little-endian TIFF with JPEGInterchangeFormat pointing at an embedded JPEG.
     pub fn synthetic_tiff_raw(dng: bool, preview: &[u8]) -> Vec<u8> {
@@ -251,7 +294,11 @@ pub(crate) mod tests {
         assert_eq!(r.jpeg, p);
         let nef = synthetic_tiff_raw(false, &p);
         assert_eq!(identify(&nef, Some("NEF")), Some(RawKind::Nef));
-        assert_eq!(identify(&nef, None), None, "plain TIFF without RAW hint is not RAW");
+        assert_eq!(
+            identify(&nef, None),
+            None,
+            "plain TIFF without RAW hint is not RAW"
+        );
         assert!(extract_preview(&nef, Some("nef")).is_ok());
     }
     #[test]
@@ -273,7 +320,8 @@ pub(crate) mod tests {
     }
     #[test]
     fn hostile_raw_inputs() {
-        let mut loops = b"II*\0\x08\0\0\0\x01\0\x4a\x01\x04\0\x01\0\0\0\x08\0\0\0\x08\0\0\0".to_vec();
+        let mut loops =
+            b"II*\0\x08\0\0\0\x01\0\x4a\x01\x04\0\x01\0\0\0\x08\0\0\0\x08\0\0\0".to_vec();
         loops.extend_from_slice(&[0; 16]);
         assert!(extract_preview(&loops, Some("dng")).is_err());
         let mut lying = synthetic_tiff_raw(true, &jpeg(8, 8));

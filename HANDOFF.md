@@ -1,5 +1,55 @@
 # AI Photo Defense development handoff
 
+## Part 3 increment (2026-11-26, Claude Opus 5.5)
+
+Branch `claude/part3-studio`, stacked on `claude/part2-privacy-editing` (PR #7, open and not yet merged). Starting commit `7b0e8b22b11b7191632974552298ec539e5ac51a`. Specification: [docs/PART3_SPECIFICATION.md](docs/PART3_SPECIFICATION.md); status: [docs/IMPLEMENTATION_MATRIX.md](docs/IMPLEMENTATION_MATRIX.md#part-3).
+
+### Problems found in Parts 1-2 during this review
+
+1. The Part 2 desktop interface was a tabbed dashboard: the three modes only changed which tabs were visible, controls were oversized and rounded, there was no menu bar, histogram, filmstrip, adjustments or resizable panels, and at 125% scaling the window exceeded the work area (status bar hidden). Evidence: earlier screenshots `docs/screenshots/privacy-scan.png` etc.
+2. No structured logging, no crash recovery, no projects: a crash lost all work.
+3. No colour correction, layers, RAW handling, catalog or forensic tools.
+4. Iced 0.13's canvas mispositions geometry inside pane grids (found while validating the redesign); overlays now rasterise.
+5. Security finding introduced and fixed during this increment: the first catalog build used rusqlite 0.38 whose bundled SQLite had RUSTSEC-2026-0459 (CVE-2026-119375, medium). Upgraded to rusqlite 0.43 (libsqlite3-sys 0.40); `cargo audit` reports no vulnerabilities.
+
+### What was added
+
+| Crate / area | Content |
+|---|---|
+| `photo-log` (new) | One allowlisted structured logger: stable APD codes, session/job ids, durations, recovery status; sanitiser masks paths, numbers, tokens, URLs, e-mails, credentials and strips control/bidi characters; JSON lines, rotation, retention, size cap, clear, sanitized report, panic hook without memory dumps |
+| `photo-project` (new) | Projects: atomic saves, `.bak` + checkpoints, autosave journal, corrupt-file fallback, session lock for unclean-shutdown detection, temp cleanup |
+| `photo-catalog` (new) | SQLite Media Manager: photos, tags, ratings, flags, albums, parameterised filters, duplicates, missing files; optional thumbnail cache with overwrite-then-delete clearing |
+| `photo-edit` | `color` (linear-light WB/exposure, tone, curves, HSL, grading, LUT .cube import/export, presets, histogram, clipping, auto tone), `layers` (adjustment layers with soft masks, blend modes, opacity, visibility, ordering; perspective, lens, canvas; shape fills), `proxy` (scaled preview rendering); redaction layers always render on top |
+| `photo-core` | `raw`: RAW identification and embedded-preview extraction (DNG, CR2, CR3, NEF, ARW, RAF, ORF, RW2, PEF) |
+| `photo-privacy` | `forensics`: read-only inspection (hashes, EXIF listing, JPEG tables/quality estimate, C2PA presence reported as unverified, heuristic indicators labelled as not proof) |
+| `photo-pipeline` | `pre_export_review` for high-assurance export; RAW extensions in safe batch collection |
+| `photo-desktop` | Complete redesign: menus, Essential processing list, Professional dockable panes (Library, Viewer, Inspector, Filmstrip), Technical tool pages (Diagnostics, Performance, Validation, Forensics, Lab, Models, History), autosave/restore banner, safe mode |
+| CLI | `forensics`, `raw-preview` |
+
+### Verified on Windows 10 x64 (Rust 1.100.0)
+
+- `cargo fmt --all --check`, `cargo clippy --locked --workspace --all-targets -- -D warnings` (and `--all-features`): pass.
+- `cargo test --locked --workspace`: 73 passed (74 with `--all-features`).
+- `cargo audit`: no vulnerabilities (informational: chrono unmaintained via rxing; lru unsound and unmaintained crates via Iced). `cargo deny check`: pass.
+- `cargo build --release --workspace`: pass.
+- Real GUI runs with screenshots in `docs/screenshots/part3-*.png`; defects found and fixed are listed in `docs/design/PART3_DESIGN.md`. Forced termination then restart showed the autosave restore banner.
+- Logging privacy: unit tests feed synthetic paths, card numbers, tokens, Wi-Fi and OTP payloads and injection sequences; none reach files or reports.
+- Benchmarks: `docs/BENCHMARKS.md` (measured, release build).
+
+### Not done or blocked (never present as working)
+
+RAW development (LGPL licensing decision), adversarial protection (no validated model), model-based detection/segmentation/OCR, intelligent selection, text layers, colour wheels/profile conversion/HDR, C2PA verification, GPU acceleration, accessibility (no AccessKit in Iced 0.13), OS-native menus and full context menus, persisted settings/pane layout, portable project archives, disk-exhaustion and GPU-failure recovery tests, fuzz harness, competitive benchmarks, macOS/Linux runtime testing, signed installers.
+
+### Suggested next steps
+
+1. Merge PR #7 after CI, then retarget the Part 3 PR to `main`.
+2. Owner decision on RAW decoder licensing (rawler/rawloader LGPL in a separate helper process is one option).
+3. Evaluate Iced 0.14 for AccessKit and fix the canvas issue upstream; then restore vector overlays.
+4. Add cargo-fuzz targets for RAW previews, metadata, LUT and project parsing.
+
+---
+
+
 Updated 2026-11-26 by Claude (Opus 5.5). Start here. This is a working development increment, not completion of the full brief in [docs/MASTER_SPECIFICATION.md](docs/MASTER_SPECIFICATION.md). Requirement-by-requirement status is in [docs/IMPLEMENTATION_MATRIX.md](docs/IMPLEMENTATION_MATRIX.md).
 
 ## Starting point and audit

@@ -1,0 +1,2624 @@
+//! Application state, messages and update logic.
+use crate::{theme, views};
+use iced::widget::{image, pane_grid};
+use iced::{Event, Point, Subscription, Task, keyboard, window};
+use photo_core::ExportFormat;
+use photo_edit::color::{Adjustments, Curve, Histogram, Lut3d};
+use photo_edit::{
+    AspectRatio, BlendMode, Concealment, EditStack, LayerMask, Operation, Rect, Selection,
+};
+use photo_log::{Code, Component, Level};
+use photo_privacy::{Finding, Profile, ScanReport};
+use std::path::{Path, PathBuf};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::{Duration, Instant};
+
+pub const PROXY_EDGE: u32 = 1600;
+pub const QUEUE_LIMIT: usize = 500;
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const DEPENDENCIES: &str = env!("APD_DEPENDENCIES");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    Essential,
+    #[default]
+    Professional,
+    Technical,
+}
+impl Mode {
+    pub const ALL: [Self; 3] = [Self::Essential, Self::Professional, Self::Technical];
+}
+impl std::fmt::Display for Mode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Menu {
+    File,
+    Edit,
+    Photo,
+    View,
+    Help,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Tool {
+    #[default]
+    Inspect,
+    Crop,
+    Rect,
+    Ellipse,
+    Polygon,
+    Lasso,
+    Brush,
+    Linear,
+    Radial,
+}
+impl Tool {
+    pub const ALL: [Self; 9] = [
+        Self::Inspect,
+        Self::Crop,
+        Self::Rect,
+        Self::Ellipse,
+        Self::Polygon,
+        Self::Lasso,
+        Self::Brush,
+        Self::Linear,
+        Self::Radial,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Inspect => "Inspect",
+            Self::Crop => "Crop",
+            Self::Rect => "Rect",
+            Self::Ellipse => "Ellipse",
+            Self::Polygon => "Polygon",
+            Self::Lasso => "Lasso",
+            Self::Brush => "Brush",
+            Self::Linear => "Gradient",
+            Self::Radial => "Radial",
+        }
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Self::Inspect => "I",
+            Self::Crop => "C",
+            Self::Rect => "M",
+            Self::Ellipse => "E",
+            Self::Polygon => "P",
+            Self::Lasso => "L",
+            Self::Brush => "B",
+            Self::Linear => "G",
+            Self::Radial => "R",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ViewMode {
+    #[default]
+    Edited,
+    Before,
+    Split,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    Black,
+    White,
+    Blur,
+    Pixelate,
+    Mosaic,
+}
+impl Method {
+    pub const ALL: [Self; 5] = [
+        Self::Black,
+        Self::White,
+        Self::Blur,
+        Self::Pixelate,
+        Self::Mosaic,
+    ];
+    pub fn concealment(self, strength: u32) -> Concealment {
+        match self {
+            Self::Black => Concealment::BLACK,
+            Self::White => Concealment::WHITE,
+            Self::Blur => Concealment::GaussianBlur {
+                sigma: strength as f32,
+            },
+            Self::Pixelate => Concealment::Pixelate {
+                block: strength.max(2),
+            },
+            Self::Mosaic => Concealment::Mosaic {
+                block: strength.max(2),
+            },
+        }
+    }
+}
+impl std::fmt::Display for Method {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Black => "Opaque black (secure)",
+            Self::White => "Opaque white (secure)",
+            Self::Blur => "Blur (visual only)",
+            Self::Pixelate => "Pixelate (visual only)",
+            Self::Mosaic => "Mosaic (visual only)",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
+    Library,
+    Viewer,
+    Inspector,
+    Filmstrip,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TechPage {
+    #[default]
+    Diagnostics,
+    Performance,
+    Validation,
+    Forensics,
+    Lab,
+    Models,
+    History,
+}
+impl TechPage {
+    pub const ALL: [Self; 7] = [
+        Self::Diagnostics,
+        Self::Performance,
+        Self::Validation,
+        Self::Forensics,
+        Self::Lab,
+        Self::Models,
+        Self::History,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Diagnostics => "Diagnostics Center",
+            Self::Performance => "Performance Center",
+            Self::Validation => "Export Validation",
+            Self::Forensics => "Forensic Inspection",
+            Self::Lab => "Defense Lab",
+            Self::Models => "Model Library",
+            Self::History => "Processing History",
+        }
+    }
+}
+
+/// Every adjustable value in the Color Studio. HSL uses the selected band.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    Exposure,
+    Contrast,
+    Brightness,
+    Highlights,
+    Shadows,
+    Whites,
+    Blacks,
+    Temperature,
+    Tint,
+    Vibrance,
+    Saturation,
+    Clarity,
+    Texture,
+    Dehaze,
+    Sharpness,
+    Noise,
+    Vignette,
+    Grain,
+    Gamma,
+    BlackPoint,
+    WhitePoint,
+    HslHue,
+    HslSat,
+    HslLum,
+    CurveShadows,
+    CurveDarks,
+    CurveLights,
+    CurveHighlights,
+    SplitShadowHue,
+    SplitShadowAmount,
+    SplitHighlightHue,
+    SplitHighlightAmount,
+    LutStrength,
+    Opacity,
+}
+
+#[derive(Debug, Clone)]
+pub struct Edited {
+    pub handle: image::Handle,
+    pub before: image::Handle,
+    pub full: (u32, u32),
+    pub proxy: (u32, u32),
+    pub hist: Arc<Histogram>,
+    pub hist_img: image::Handle,
+    pub pixels: Arc<::image::RgbaImage>,
+    pub ms: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScanState {
+    pub report: ScanReport,
+    pub dismissed: Vec<bool>,
+    pub dims: (u32, u32),
+}
+
+#[derive(Debug, Clone)]
+pub enum ExportState {
+    Done {
+        path: PathBuf,
+        passed: bool,
+        report: Box<photo_pipeline::ExportReport>,
+        ms: f64,
+    },
+    Blocked(Vec<String>),
+}
+
+pub struct Entry {
+    pub path: PathBuf,
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub bytes: u64,
+    pub raw: Option<String>,
+    pub thumb: image::Handle,
+    pub edits: EditStack,
+    pub undo: Vec<EditStack>,
+    pub redo: Vec<EditStack>,
+    pub generation: u64,
+    pub rendering: bool,
+    pub dirty: bool,
+    pub proxy: Option<Arc<::image::DynamicImage>>,
+    pub edited: Option<Edited>,
+    pub scan: Option<ScanState>,
+    pub export: Option<ExportState>,
+    pub rating: u8,
+    pub flagged: bool,
+    pub catalog_id: Option<i64>,
+    pub status: String,
+}
+
+#[derive(Clone)]
+pub struct Imported {
+    path: PathBuf,
+    width: u32,
+    height: u32,
+    bytes: u64,
+    raw: Option<String>,
+    thumb: image::Handle,
+    proxy: Arc<::image::DynamicImage>,
+}
+impl std::fmt::Debug for Imported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Imported({}x{})", self.width, self.height)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Perf {
+    pub cpu: Option<f32>,
+    pub mem_used: Option<u64>,
+    pub mem_total: Option<u64>,
+    pub process_mem: Option<u64>,
+    pub disk_free: Option<u64>,
+    pub cores: usize,
+    pub samples: Vec<(String, f64)>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Message {
+    Event(Event),
+    Tick,
+    Autosave,
+    MenuToggle(Menu),
+    MenuClose,
+    Mode(Mode),
+    Appearance(theme::Appearance),
+    Fullscreen(bool),
+    Group(&'static str),
+    OpenDialog,
+    OpenFolderDialog,
+    Picked(Vec<PathBuf>),
+    Imported(Result<Vec<Imported>, String>, Vec<String>),
+    Select(usize),
+    Remove(usize),
+    ClearAll,
+    Rating(usize, u8),
+    Flag(usize),
+    InputPath(String),
+    ImportPath,
+    OutputDir(String),
+    BrowseOutput,
+    OutputPicked(Option<PathBuf>),
+    Tool(Tool),
+    PointerMove(Point),
+    PointerDown,
+    PointerUp,
+    View(ViewMode),
+    Clipping,
+    Thirds,
+    Escape,
+    Enter,
+    ProxyLoaded(usize, Result<Arc<::image::DynamicImage>, String>),
+    Rendered(usize, u64, Result<Edited, String>),
+    Apply(Operation),
+    Undo,
+    Redo,
+    Adjust(Field, f32),
+    Commit,
+    ResetLayer,
+    AutoTone,
+    Preset(String),
+    Band(usize),
+    Layer(Option<usize>),
+    LayerToggle(usize),
+    LayerMove(usize, bool),
+    LayerDelete(usize),
+    LayerBlend(BlendMode),
+    NewLayer,
+    Method(Method),
+    Strength(u32),
+    BrushRadius(f32),
+    Straighten(f32),
+    Lens(f32),
+    ConcealSelection,
+    ImportLut,
+    LutLoaded(Result<Lut3d, String>),
+    ExportLut,
+    Profile(String),
+    Scan,
+    Scanned(usize, u64, Result<(ScanReport, (u32, u32)), String>),
+    FocusFinding(usize),
+    Dismiss(usize, bool),
+    ConcealFindings,
+    Format(ExportFormat),
+    Quality(u8),
+    HighAssurance(bool),
+    AutoRedact(bool),
+    EssentialAspect(Option<AspectRatio>),
+    Export { accept_unresolved: bool, all: bool },
+    Exported(Vec<(usize, Result<ExportState, String>)>),
+    Cancel,
+    SaveProject,
+    ProjectSaved(Result<PathBuf, String>),
+    OpenProject,
+    ProjectOpened(Result<photo_project::Project, String>),
+    RestoreAutosave,
+    DiscardAutosave,
+    LibSearch(String),
+    LibRating(u8),
+    TagInput(String),
+    ApplyTag,
+    Page(TechPage),
+    LogLevel(Level),
+    LogComponent(Option<Component>),
+    LogSearch(String),
+    CodeLookup(String),
+    CopyReport,
+    PreviewReport,
+    SaveReport,
+    ReportSaved(Result<PathBuf, String>),
+    ClearLogs,
+    Retention(u32),
+    Verbosity(Level),
+    Lab,
+    LabDone(Result<photo_lab::Report, String>),
+    Forensics,
+    ForensicsDone(Result<Box<photo_privacy::forensics::ForensicReport>, String>),
+    Cache(bool),
+    ClearCache,
+    PaneResized(pane_grid::ResizeEvent),
+    PaneDragged(pane_grid::DragEvent),
+    PaneMaximize(Pane),
+    ResetLayout,
+}
+
+pub struct App {
+    pub mode: Mode,
+    pub appearance: theme::Appearance,
+    pub menu: Option<Menu>,
+    pub fullscreen: bool,
+    pub panes: pane_grid::State<Pane>,
+    pub closed_groups: std::collections::HashSet<&'static str>,
+    pub entries: Vec<Entry>,
+    pub selected: Option<usize>,
+    pub input_path: String,
+    pub output_dir: String,
+    pub status: String,
+    pub busy: Option<String>,
+    pub cancel: Arc<AtomicBool>,
+    pub tool: Tool,
+    pub view: ViewMode,
+    pub clipping: bool,
+    pub thirds: bool,
+    pub pointer: Point,
+    pub pressed: bool,
+    pub drag_from: Option<Point>,
+    pub points: Vec<(f32, f32)>,
+    pub selection: Option<Selection>,
+    pub gradient: Option<((f32, f32), (f32, f32))>,
+    pub pixel_probe: Option<(u32, u32, [u8; 4])>,
+    pub method: Method,
+    pub strength: u32,
+    pub brush_radius: f32,
+    pub straighten: f32,
+    pub lens: f32,
+    pub band: usize,
+    pub active_layer: Option<usize>,
+    pub editing: bool,
+    pub profile: String,
+    pub focused_finding: Option<usize>,
+    pub format: ExportFormat,
+    pub quality: u8,
+    pub high_assurance: bool,
+    pub auto_redact: bool,
+    pub essential_aspect: Option<AspectRatio>,
+    pub project_path: Option<PathBuf>,
+    pub data_dir: PathBuf,
+    pub autosave_offer: Option<photo_project::Project>,
+    pub pending_restore: Option<photo_project::Project>,
+    pub unclean_shutdown: bool,
+    pub safe_mode: bool,
+    pub _session: Option<photo_project::SessionGuard>,
+    pub dirty_project: bool,
+    pub catalog: Option<photo_catalog::Catalog>,
+    pub cache_enabled: bool,
+    pub lib_search: String,
+    pub lib_rating: u8,
+    pub lib_rows: Vec<photo_catalog::PhotoRow>,
+    pub tag_input: String,
+    pub page: TechPage,
+    pub log_level: Level,
+    pub log_component: Option<Component>,
+    pub log_search: String,
+    pub code_lookup: String,
+    pub report_preview: Option<String>,
+    pub lab: Option<photo_lab::Report>,
+    pub forensics: Option<Box<photo_privacy::forensics::ForensicReport>>,
+    pub perf: Perf,
+    pub sys: Option<sysinfo::System>,
+}
+
+pub fn data_dir() -> PathBuf {
+    if let Some(d) = std::env::var_os("APD_DATA_DIR") {
+        return PathBuf::from(d);
+    }
+    #[cfg(target_os = "windows")]
+    let base = std::env::var_os("APPDATA").map(PathBuf::from);
+    #[cfg(target_os = "macos")]
+    let base =
+        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support"));
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    base.unwrap_or_else(std::env::temp_dir)
+        .join("AI Photo Defense")
+}
+
+pub fn short(p: &Path) -> String {
+    p.file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
+}
+pub fn profile_by_name(n: &str) -> Profile {
+    Profile::builtin(n).unwrap_or_else(|| Profile::builtin("Maximum Privacy").expect("builtin"))
+}
+fn handle(p: &::image::RgbaImage) -> image::Handle {
+    image::Handle::from_rgba(p.width(), p.height(), p.clone().into_raw())
+}
+fn default_panes() -> pane_grid::State<Pane> {
+    use pane_grid::{Axis, Configuration};
+    pane_grid::State::with_configuration(Configuration::Split {
+        axis: Axis::Vertical,
+        ratio: 0.16,
+        a: Box::new(Configuration::Pane(Pane::Library)),
+        b: Box::new(Configuration::Split {
+            axis: Axis::Vertical,
+            ratio: 0.72,
+            a: Box::new(Configuration::Split {
+                axis: Axis::Horizontal,
+                ratio: 0.82,
+                a: Box::new(Configuration::Pane(Pane::Viewer)),
+                b: Box::new(Configuration::Pane(Pane::Filmstrip)),
+            }),
+            b: Box::new(Configuration::Pane(Pane::Inspector)),
+        }),
+    })
+}
+
+/// Reads the value of a field from an adjustment set (HSL uses `band`).
+pub fn field_value(a: &Adjustments, f: Field, band: usize) -> f32 {
+    let curve = curve_params(&a.curve_master);
+    match f {
+        Field::Exposure => a.exposure,
+        Field::Contrast => a.contrast,
+        Field::Brightness => a.brightness,
+        Field::Highlights => a.highlights,
+        Field::Shadows => a.shadows,
+        Field::Whites => a.whites,
+        Field::Blacks => a.blacks,
+        Field::Temperature => a.temperature,
+        Field::Tint => a.tint,
+        Field::Vibrance => a.vibrance,
+        Field::Saturation => a.saturation,
+        Field::Clarity => a.clarity,
+        Field::Texture => a.texture,
+        Field::Dehaze => a.dehaze,
+        Field::Sharpness => a.sharpness,
+        Field::Noise => a.noise_reduction,
+        Field::Vignette => a.vignette,
+        Field::Grain => a.grain,
+        Field::Gamma => a.gamma,
+        Field::BlackPoint => a.black_point,
+        Field::WhitePoint => a.white_point,
+        Field::HslHue => a.hsl_hue[band],
+        Field::HslSat => a.hsl_saturation[band],
+        Field::HslLum => a.hsl_luminance[band],
+        Field::CurveShadows => curve[0],
+        Field::CurveDarks => curve[1],
+        Field::CurveLights => curve[2],
+        Field::CurveHighlights => curve[3],
+        Field::SplitShadowHue => a.split_shadow_hue,
+        Field::SplitShadowAmount => a.split_shadow_strength,
+        Field::SplitHighlightHue => a.split_highlight_hue,
+        Field::SplitHighlightAmount => a.split_highlight_strength,
+        Field::LutStrength => a.lut_strength,
+        Field::Opacity => 1.,
+    }
+}
+/// Parametric curve values are recovered from the stored control points.
+pub fn curve_params(c: &Curve) -> [f32; 4] {
+    if c.points.len() != 6 {
+        return [0.; 4];
+    }
+    let k = 0.25;
+    [
+        (c.points[1].1 - 0.125) / (k * 0.5),
+        (c.points[2].1 - 0.375) / k,
+        (c.points[3].1 - 0.625) / k,
+        (c.points[4].1 - 0.875) / (k * 0.5),
+    ]
+}
+fn set_field(a: &mut Adjustments, f: Field, band: usize, v: f32) {
+    let mut curve = curve_params(&a.curve_master);
+    match f {
+        Field::Exposure => a.exposure = v.clamp(-5., 5.),
+        Field::Contrast => a.contrast = v,
+        Field::Brightness => a.brightness = v,
+        Field::Highlights => a.highlights = v,
+        Field::Shadows => a.shadows = v,
+        Field::Whites => a.whites = v,
+        Field::Blacks => a.blacks = v,
+        Field::Temperature => a.temperature = v,
+        Field::Tint => a.tint = v,
+        Field::Vibrance => a.vibrance = v,
+        Field::Saturation => a.saturation = v,
+        Field::Clarity => a.clarity = v,
+        Field::Texture => a.texture = v,
+        Field::Dehaze => a.dehaze = v,
+        Field::Sharpness => a.sharpness = v.clamp(0., 1.),
+        Field::Noise => a.noise_reduction = v.clamp(0., 1.),
+        Field::Vignette => a.vignette = v,
+        Field::Grain => a.grain = v.clamp(0., 1.),
+        Field::Gamma => a.gamma = v.clamp(0.2, 5.),
+        Field::BlackPoint => a.black_point = v.clamp(0., a.white_point - 0.05),
+        Field::WhitePoint => a.white_point = v.clamp(a.black_point + 0.05, 1.),
+        Field::HslHue => a.hsl_hue[band] = v,
+        Field::HslSat => a.hsl_saturation[band] = v,
+        Field::HslLum => a.hsl_luminance[band] = v,
+        Field::CurveShadows | Field::CurveDarks | Field::CurveLights | Field::CurveHighlights => {
+            let i = match f {
+                Field::CurveShadows => 0,
+                Field::CurveDarks => 1,
+                Field::CurveLights => 2,
+                _ => 3,
+            };
+            curve[i] = v;
+            a.curve_master = if curve.iter().all(|x| x.abs() < 1e-4) {
+                Curve::default()
+            } else {
+                Curve::parametric(curve[0], curve[1], curve[2], curve[3])
+            };
+        }
+        Field::SplitShadowHue => a.split_shadow_hue = v,
+        Field::SplitShadowAmount => a.split_shadow_strength = v.clamp(0., 1.),
+        Field::SplitHighlightHue => a.split_highlight_hue = v,
+        Field::SplitHighlightAmount => a.split_highlight_strength = v.clamp(0., 1.),
+        Field::LutStrength => a.lut_strength = v.clamp(0., 1.),
+        Field::Opacity => {}
+    }
+}
+
+/// Output dimensions of an edit stack, derived from geometry operations.
+pub fn full_dims(edits: &EditStack, w: u32, h: u32) -> (u32, u32) {
+    let (mut w, mut h) = (w, h);
+    for op in edits.ordered() {
+        match op {
+            Operation::Crop(r) => {
+                if let Some(c) = r.clamp_to(w, h) {
+                    (w, h) = (c.width, c.height)
+                }
+            }
+            Operation::CropAspect(a) => {
+                if let Ok(c) = a.centered_crop(w, h) {
+                    (w, h) = (c.width, c.height)
+                }
+            }
+            Operation::Resize { width, height } => (w, h) = (*width, *height),
+            Operation::FitWithin {
+                max_width,
+                max_height,
+            } => {
+                if w > *max_width || h > *max_height {
+                    let s = (f64::from(*max_width) / f64::from(w))
+                        .min(f64::from(*max_height) / f64::from(h));
+                    (w, h) = (
+                        ((f64::from(w) * s).round() as u32).max(1),
+                        ((f64::from(h) * s).round() as u32).max(1),
+                    );
+                }
+            }
+            Operation::Rotate90 | Operation::Rotate270 => (w, h) = (h, w),
+            Operation::Straighten { .. } => {
+                let k = (w.max(h) as f64 / 1024.).max(1.);
+                let probe = ::image::DynamicImage::new_rgb8(
+                    ((w as f64 / k) as u32).max(1),
+                    ((h as f64 / k) as u32).max(1),
+                );
+                if let Ok(o) =
+                    EditStack::from_operations(vec![op.clone()]).and_then(|s| s.render(&probe))
+                {
+                    (w, h) = (
+                        (o.width() as f64 * k).round() as u32,
+                        (o.height() as f64 * k).round() as u32,
+                    );
+                }
+            }
+            Operation::Perspective { width, height, .. }
+            | Operation::Canvas { width, height, .. } => (w, h) = (*width, *height),
+            _ => {}
+        }
+    }
+    (w.max(1), h.max(1))
+}
+
+impl App {
+    fn new(safe_mode: bool) -> Self {
+        let data_dir = data_dir();
+        let _ = std::fs::create_dir_all(&data_dir);
+        photo_log::configure(photo_log::Config {
+            directory: Some(data_dir.join("logs")),
+            ..Default::default()
+        });
+        let session = photo_project::SessionGuard::acquire(&data_dir).ok();
+        let unclean = session.as_ref().is_some_and(|s| s.previous_unclean);
+        photo_log::install_panic_hook(session.as_ref().map(|s| s.crash_marker()));
+        photo_project::clean_temp_files(&data_dir);
+        photo_log::info(
+            Component::App,
+            Code::Startup,
+            if safe_mode {
+                "started in safe mode"
+            } else {
+                "started"
+            },
+        );
+        let autosave_offer = if safe_mode {
+            None
+        } else {
+            std::fs::read(photo_project::autosave_path(
+                &data_dir.join("session.apdproj"),
+            ))
+            .ok()
+            .and_then(|b| photo_project::Project::from_bytes(&b).ok())
+            .filter(|p| !p.entries.is_empty())
+        };
+        let catalog = if safe_mode {
+            None
+        } else {
+            photo_catalog::Catalog::open(&data_dir.join("catalog.db"))
+                .inspect_err(|e| {
+                    photo_log::error(Component::Catalog, Code::Database, &format!("{e:#}"))
+                })
+                .ok()
+        };
+        let sys = sysinfo::System::new().ok();
+        let mut app = Self {
+            mode: Mode::Professional,
+            appearance: theme::Appearance::Graphite,
+            menu: None,
+            fullscreen: false,
+            panes: default_panes(),
+            closed_groups: [
+                "Detail",
+                "Effects",
+                "Levels",
+                "Color Grading",
+                "HSL",
+                "Tone Curve",
+                "LUT",
+                "Geometry",
+                "Presets",
+                "Redaction",
+            ]
+            .into_iter()
+            .collect(),
+            entries: vec![],
+            selected: None,
+            input_path: String::new(),
+            output_dir: String::new(),
+            status: "Ready".into(),
+            busy: None,
+            cancel: Arc::new(AtomicBool::new(false)),
+            tool: Tool::Inspect,
+            view: ViewMode::Edited,
+            clipping: false,
+            thirds: false,
+            pointer: Point::ORIGIN,
+            pressed: false,
+            drag_from: None,
+            points: vec![],
+            selection: None,
+            gradient: None,
+            pixel_probe: None,
+            method: Method::Black,
+            strength: 16,
+            brush_radius: 20.,
+            straighten: 0.,
+            lens: 0.,
+            band: 0,
+            active_layer: None,
+            editing: false,
+            profile: "Social Media".into(),
+            focused_finding: None,
+            format: ExportFormat::Png,
+            quality: 92,
+            high_assurance: true,
+            auto_redact: false,
+            essential_aspect: None,
+            project_path: None,
+            data_dir,
+            autosave_offer,
+            pending_restore: None,
+            unclean_shutdown: unclean,
+            safe_mode,
+            _session: session,
+            dirty_project: false,
+            catalog,
+            cache_enabled: false,
+            lib_search: String::new(),
+            lib_rating: 0,
+            lib_rows: vec![],
+            tag_input: String::new(),
+            page: TechPage::Diagnostics,
+            log_level: Level::Info,
+            log_component: None,
+            log_search: String::new(),
+            code_lookup: String::new(),
+            report_preview: None,
+            lab: None,
+            forensics: None,
+            perf: Perf {
+                cores: std::thread::available_parallelism()
+                    .map(|n| n.get())
+                    .unwrap_or(1),
+                ..Default::default()
+            },
+            sys,
+        };
+        app.refresh_library();
+        app
+    }
+
+    pub fn theme_accent(&self) -> [u8; 3] {
+        let c = crate::theme::theme(self.appearance).palette().primary;
+        [(c.r * 255.) as u8, (c.g * 255.) as u8, (c.b * 255.) as u8]
+    }
+    pub fn note(&mut self, s: impl Into<String>) {
+        self.status = s.into();
+    }
+    pub fn current(&self) -> Option<&Entry> {
+        self.selected.and_then(|i| self.entries.get(i))
+    }
+    fn current_mut(&mut self) -> Option<&mut Entry> {
+        self.selected.and_then(|i| self.entries.get_mut(i))
+    }
+    pub fn group_open(&self, g: &'static str) -> bool {
+        !self.closed_groups.contains(g)
+    }
+    /// The adjustment layer the Color Studio controls edit.
+    pub fn layer(&self) -> Option<(usize, &Operation)> {
+        let e = self.current()?;
+        let k = self.active_layer.or_else(|| {
+            e.edits.active().iter().position(
+                |o| matches!(o, Operation::Adjust { name, mask: None, .. } if name == "Basic"),
+            )
+        })?;
+        e.edits
+            .active()
+            .get(k)
+            .filter(|o| matches!(o, Operation::Adjust { .. }))
+            .map(|o| (k, o))
+    }
+    pub fn layer_adjustments(&self) -> Adjustments {
+        match self.layer() {
+            Some((_, Operation::Adjust { adjustments, .. })) => (**adjustments).clone(),
+            _ => Adjustments::default(),
+        }
+    }
+    fn snapshot(&mut self) {
+        if let Some(e) = self.current_mut() {
+            e.undo.push(e.edits.clone());
+            if e.undo.len() > 200 {
+                e.undo.remove(0);
+            }
+            e.redo.clear();
+        }
+        self.dirty_project = true;
+    }
+    fn ensure_layer(&mut self) -> Option<usize> {
+        let i = self.selected?;
+        if let Some((k, _)) = self.layer() {
+            self.active_layer = Some(k);
+            return Some(k);
+        }
+        let op = Operation::Adjust {
+            name: "Basic".into(),
+            adjustments: Box::default(),
+            mask: None,
+            invert: false,
+            opacity: 1.,
+            blend: BlendMode::Normal,
+            visible: true,
+        };
+        self.entries[i].edits.push(op).ok()?;
+        let k = self.entries[i].edits.active().len() - 1;
+        self.active_layer = Some(k);
+        Some(k)
+    }
+    fn modify_layer(
+        &mut self,
+        f: impl FnOnce(&mut Adjustments, &mut f32, &mut BlendMode),
+    ) -> Task<Message> {
+        if self.selected.is_none() {
+            return Task::none();
+        }
+        if !self.editing {
+            self.snapshot();
+            self.editing = true;
+        }
+        let Some(k) = self.ensure_layer() else {
+            return Task::none();
+        };
+        let i = self.selected.expect("checked");
+        if let Some(Operation::Adjust {
+            name,
+            adjustments,
+            mask,
+            invert,
+            mut opacity,
+            mut blend,
+            visible,
+        }) = self.entries[i].edits.active().get(k).cloned()
+        {
+            let mut a = *adjustments;
+            f(&mut a, &mut opacity, &mut blend);
+            if let Err(e) = self.entries[i].edits.replace(
+                k,
+                Operation::Adjust {
+                    name,
+                    adjustments: Box::new(a),
+                    mask,
+                    invert,
+                    opacity,
+                    blend,
+                    visible,
+                },
+            ) {
+                self.note(format!("{e:#}"));
+            }
+        }
+        self.after_edit(i)
+    }
+    fn after_edit(&mut self, i: usize) -> Task<Message> {
+        if let Some(e) = self.entries.get_mut(i) {
+            e.export = None;
+        }
+        self.dirty_project = true;
+        self.request_render(i)
+    }
+    /// Coalesced proxy render: at most one in flight per photo; the latest state wins.
+    pub fn request_render(&mut self, i: usize) -> Task<Message> {
+        let clip = self.clipping;
+        let Some(e) = self.entries.get_mut(i) else {
+            return Task::none();
+        };
+        e.generation += 1;
+        if e.rendering {
+            e.dirty = true;
+            return Task::none();
+        }
+        let Some(proxy) = e.proxy.clone() else {
+            return self.load_proxy(i);
+        };
+        e.rendering = true;
+        e.dirty = false;
+        let generation = e.generation;
+        let (fw, fh) = (e.width, e.height);
+        let edits = e.edits.clone();
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || -> Result<Edited, String> {
+                    let t = Instant::now();
+                    let s = proxy.width() as f32 / fw.max(1) as f32;
+                    let out = edits
+                        .scaled(s)
+                        .render(&proxy)
+                        .map_err(|e| format!("{e:#}"))?
+                        .to_rgba8();
+                    let hist = photo_edit::color::histogram(&out);
+                    let shown = if clip {
+                        photo_edit::color::clipping_overlay(&out)
+                    } else {
+                        out.clone()
+                    };
+                    Ok(Edited {
+                        handle: handle(&shown),
+                        before: handle(&proxy.to_rgba8()),
+                        full: full_dims(&edits, fw, fh),
+                        proxy: (out.width(), out.height()),
+                        hist_img: handle(&crate::widgets::histogram_image(&hist, 256, 90, true)),
+                        hist: Arc::new(hist),
+                        pixels: Arc::new(out),
+                        ms: t.elapsed().as_secs_f64() * 1000.,
+                    })
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()))
+            },
+            move |r| Message::Rendered(i, generation, r),
+        )
+    }
+    fn load_proxy(&mut self, i: usize) -> Task<Message> {
+        let path = self.entries[i].path.clone();
+        // Keep at most four decoded proxies in memory (sized for 8 GB systems).
+        let cached: Vec<usize> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(k, e)| e.proxy.is_some() && *k != i && Some(*k) != self.selected)
+            .map(|(k, _)| k)
+            .collect();
+        for k in cached.iter().take(cached.len().saturating_sub(3)) {
+            self.entries[*k].proxy = None;
+        }
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let p = photo_core::load(&path).map_err(|e| format!("{e:#}"))?;
+                    Ok(Arc::new(p.pixels.thumbnail(PROXY_EDGE, PROXY_EDGE)))
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()))
+            },
+            move |r| Message::ProxyLoaded(i, r),
+        )
+    }
+    fn project(&self) -> photo_project::Project {
+        photo_project::Project {
+            name: self
+                .project_path
+                .as_deref()
+                .map(short)
+                .unwrap_or_else(|| "Session".into()),
+            entries: self
+                .entries
+                .iter()
+                .map(|e| photo_project::ProjectEntry {
+                    path: e.path.clone(),
+                    edits: e.edits.clone(),
+                    rating: e.rating,
+                    tags: vec![],
+                    flagged: e.flagged,
+                })
+                .collect(),
+            settings: photo_project::Settings {
+                profile: self.profile.clone(),
+                format: self.format.extension().into(),
+                quality: self.quality,
+                mode: self.mode.to_string(),
+            },
+            ..Default::default()
+        }
+    }
+    fn refresh_library(&mut self) {
+        if let Some(c) = &self.catalog {
+            match c.query(&photo_catalog::Filter {
+                text: self.lib_search.clone(),
+                min_rating: self.lib_rating,
+                ..Default::default()
+            }) {
+                Ok(r) => self.lib_rows = r,
+                Err(e) => photo_log::error(Component::Catalog, Code::Database, &format!("{e:#}")),
+            }
+        }
+    }
+    fn selection_rect(&self) -> Option<Rect> {
+        match &self.selection {
+            Some(Selection::Rect(r)) | Some(Selection::Ellipse(r)) => Some(*r),
+            _ => None,
+        }
+    }
+
+    pub fn update(&mut self, msg: Message) -> Task<Message> {
+        match msg {
+            Message::Tick => self.refresh_perf(),
+            Message::Autosave => {
+                if self.dirty_project && !self.safe_mode && !self.entries.is_empty() {
+                    match photo_project::autosave(
+                        &self.data_dir.join("session.apdproj"),
+                        &self.project(),
+                    ) {
+                        Ok(()) => self.dirty_project = false,
+                        Err(e) => photo_log::error(
+                            Component::Project,
+                            Code::ProjectSaveFailed,
+                            &format!("autosave {e:#}"),
+                        ),
+                    }
+                }
+            }
+            Message::MenuToggle(m) => self.menu = if self.menu == Some(m) { None } else { Some(m) },
+            Message::MenuClose => self.menu = None,
+            Message::Mode(m) => {
+                self.mode = m;
+                self.menu = None;
+                if m == Mode::Technical {
+                    self.refresh_perf();
+                }
+            }
+            Message::Appearance(a) => {
+                self.appearance = a;
+                self.menu = None;
+            }
+            Message::Fullscreen(f) => {
+                self.fullscreen = f;
+                self.menu = None;
+                let mode = if f {
+                    window::Mode::Fullscreen
+                } else {
+                    window::Mode::Windowed
+                };
+                return window::get_latest().and_then(move |id| window::change_mode(id, mode));
+            }
+            Message::Group(g) => {
+                if !self.closed_groups.remove(g) {
+                    self.closed_groups.insert(g);
+                }
+            }
+            Message::InputPath(p) => self.input_path = p,
+            Message::OutputDir(p) => self.output_dir = p,
+            Message::ImportPath if !self.input_path.trim().is_empty() => {
+                return self.update(Message::Picked(vec![PathBuf::from(self.input_path.trim())]));
+            }
+            Message::OpenDialog => {
+                self.menu = None;
+                let mut exts = vec!["jpg", "jpeg", "png", "webp", "tif", "tiff"];
+                exts.extend(photo_core::raw::EXTENSIONS);
+                return Task::perform(
+                    async move {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("Photographs", &exts)
+                            .pick_files()
+                            .await
+                            .map(|v| v.into_iter().map(|f| f.path().to_path_buf()).collect())
+                            .unwrap_or_default()
+                    },
+                    Message::Picked,
+                );
+            }
+            Message::OpenFolderDialog => {
+                self.menu = None;
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .pick_folder()
+                            .await
+                            .map(|f| vec![f.path().to_path_buf()])
+                            .unwrap_or_default()
+                    },
+                    Message::Picked,
+                );
+            }
+            Message::Picked(paths) if !paths.is_empty() => {
+                if self.busy.is_some() {
+                    self.note("Busy: wait for the current task to finish.");
+                    return Task::none();
+                }
+                let opts = photo_pipeline::batch::CollectOptions {
+                    recursive: true,
+                    max_files: QUEUE_LIMIT,
+                    ..Default::default()
+                };
+                let (files, skipped) = match photo_pipeline::batch::collect(&paths, &opts) {
+                    Ok(c) => (
+                        c.files,
+                        c.skipped
+                            .into_iter()
+                            .map(|(p, w)| format!("Skipped {}: {w}", short(&p)))
+                            .collect::<Vec<_>>(),
+                    ),
+                    Err(e) => {
+                        self.note(format!("{e:#}"));
+                        return Task::none();
+                    }
+                };
+                let files: Vec<PathBuf> = files
+                    .into_iter()
+                    .filter(|f| !self.entries.iter().any(|e| &e.path == f))
+                    .collect();
+                if self.entries.len() + files.len() > QUEUE_LIMIT {
+                    self.note(format!("The collection is limited to {QUEUE_LIMIT} photographs; use the CLI batch command for larger folders."));
+                    return Task::none();
+                }
+                self.busy = Some(format!("Importing {} photograph(s)", files.len()));
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let mut ok = vec![];
+                            let mut errors = skipped;
+                            for path in files {
+                                let t = Instant::now();
+                                match photo_core::load(&path) {
+                                    Ok(p) => {
+                                        photo_log::event(
+                                            Level::Debug,
+                                            Component::Decode,
+                                            Code::Other,
+                                            "decoded",
+                                        )
+                                        .duration(t.elapsed())
+                                        .emit();
+                                        if p.raw.is_some() {
+                                            photo_log::info(
+                                                Component::Raw,
+                                                Code::RawPreview,
+                                                "RAW opened via embedded preview",
+                                            );
+                                        }
+                                        ok.push(Imported {
+                                            width: p.pixels.width(),
+                                            height: p.pixels.height(),
+                                            bytes: p.bytes.len() as u64,
+                                            raw: p.raw.map(|k| format!("{k:?}")),
+                                            thumb: handle(&p.pixels.thumbnail(220, 160).to_rgba8()),
+                                            proxy: Arc::new(
+                                                p.pixels.thumbnail(PROXY_EDGE, PROXY_EDGE),
+                                            ),
+                                            path,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        photo_log::warn(
+                                            Component::Decode,
+                                            Code::DecodeFailed,
+                                            &format!("{e:#}"),
+                                        );
+                                        errors.push(format!("{}: {e:#}", short(&path)));
+                                    }
+                                }
+                            }
+                            (Ok(ok), errors)
+                        })
+                        .await
+                        .unwrap_or_else(|e| (Err(e.to_string()), vec![]))
+                    },
+                    |(r, errs)| Message::Imported(r, errs),
+                );
+            }
+            Message::Imported(r, errors) => {
+                self.busy = None;
+                match r {
+                    Ok(list) => {
+                        let n = list.len();
+                        for im in list {
+                            let catalog_id =
+                                self.catalog.as_ref().and_then(|c| c.add(&im.path).ok());
+                            self.entries.push(Entry {
+                                name: short(&im.path),
+                                path: im.path,
+                                width: im.width,
+                                height: im.height,
+                                bytes: im.bytes,
+                                raw: im.raw,
+                                thumb: im.thumb,
+                                edits: EditStack::new(),
+                                undo: vec![],
+                                redo: vec![],
+                                generation: 0,
+                                rendering: false,
+                                dirty: false,
+                                proxy: Some(im.proxy),
+                                edited: None,
+                                scan: None,
+                                export: None,
+                                rating: 0,
+                                flagged: false,
+                                catalog_id,
+                                status: "Ready".into(),
+                            });
+                        }
+                        if let Some(p) = self.pending_restore.take() {
+                            for pe in p.entries {
+                                if let Some(e) = self.entries.iter_mut().find(|e| e.path == pe.path)
+                                {
+                                    e.edits = pe.edits;
+                                    e.rating = pe.rating;
+                                    e.flagged = pe.flagged;
+                                    e.edited = None;
+                                }
+                            }
+                            self.note("Project restored. Edits are reversible until export.");
+                        } else {
+                            self.note(format!(
+                                "Imported {n} photograph(s){}.",
+                                if errors.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!("; {} could not be read: {}", errors.len(), errors[0])
+                                }
+                            ));
+                        }
+                        self.refresh_library();
+                        self.dirty_project = true;
+                        let mut tasks = vec![];
+                        if self.selected.is_none() && !self.entries.is_empty() {
+                            tasks.push(self.update(Message::Select(0)));
+                        } else if let Some(i) = self.selected {
+                            tasks.push(self.request_render(i));
+                        }
+                        if self.mode == Mode::Essential {
+                            tasks.push(self.update(Message::Scan));
+                        }
+                        return Task::batch(tasks);
+                    }
+                    Err(e) => self.note(e),
+                }
+            }
+            Message::Select(i) if i < self.entries.len() => {
+                self.selected = Some(i);
+                self.active_layer = None;
+                self.focused_finding = None;
+                self.selection = None;
+                self.points.clear();
+                self.gradient = None;
+                self.forensics = None;
+                if self.entries[i].edited.is_none() {
+                    return self.request_render(i);
+                }
+            }
+            Message::Remove(i) if i < self.entries.len() && self.busy.is_none() => {
+                self.entries.remove(i);
+                self.selected = if self.entries.is_empty() {
+                    None
+                } else {
+                    Some(i.min(self.entries.len() - 1))
+                };
+                self.dirty_project = true;
+            }
+            Message::ClearAll if self.busy.is_none() => {
+                self.entries.clear();
+                self.selected = None;
+                self.dirty_project = true;
+                self.menu = None;
+                self.note("Collection cleared. Exported files and originals were kept.");
+            }
+            Message::Rating(i, r) => {
+                if let Some(e) = self.entries.get_mut(i) {
+                    e.rating = r.min(5);
+                    if let (Some(c), Some(id)) = (&self.catalog, e.catalog_id) {
+                        let _ = c.set_rating(id, e.rating);
+                    }
+                    self.dirty_project = true;
+                    self.refresh_library();
+                }
+            }
+            Message::Flag(i) => {
+                if let Some(e) = self.entries.get_mut(i) {
+                    e.flagged = !e.flagged;
+                    if let (Some(c), Some(id)) = (&self.catalog, e.catalog_id) {
+                        let _ = c.set_flag(id, e.flagged);
+                    }
+                }
+            }
+            Message::BrowseOutput => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .pick_folder()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::OutputPicked,
+                );
+            }
+            Message::OutputPicked(Some(p)) => self.output_dir = p.to_string_lossy().into_owned(),
+            Message::Tool(t) => {
+                self.tool = t;
+                self.points.clear();
+                self.drag_from = None;
+                if !matches!(t, Tool::Linear | Tool::Radial) {
+                    self.gradient = None;
+                }
+            }
+            Message::View(v) => self.view = v,
+            Message::Clipping => {
+                self.clipping = !self.clipping;
+                if let Some(i) = self.selected {
+                    return self.request_render(i);
+                }
+            }
+            Message::Thirds => self.thirds = !self.thirds,
+            Message::PointerMove(p) => {
+                self.pointer = p;
+                if let Some(ed) = self.current().and_then(|e| e.edited.as_ref()) {
+                    let s = ed.proxy.0 as f32 / ed.full.0.max(1) as f32;
+                    let (px, py) = ((p.x * s) as u32, (p.y * s) as u32);
+                    if px < ed.pixels.width() && py < ed.pixels.height() {
+                        self.pixel_probe =
+                            Some((p.x as u32, p.y as u32, ed.pixels.get_pixel(px, py).0));
+                    }
+                }
+                if self.pressed {
+                    match self.tool {
+                        Tool::Lasso | Tool::Brush => {
+                            if self
+                                .points
+                                .last()
+                                .is_none_or(|l| (l.0 - p.x).abs() + (l.1 - p.y).abs() > 2.)
+                                && self.points.len() < 5000
+                            {
+                                self.points.push((p.x, p.y));
+                            }
+                        }
+                        Tool::Rect | Tool::Ellipse | Tool::Crop | Tool::Radial => {
+                            if let Some(a) = self.drag_from {
+                                let r = Rect::new(
+                                    a.x.min(p.x) as u32,
+                                    a.y.min(p.y) as u32,
+                                    ((a.x - p.x).abs() as u32).max(1),
+                                    ((a.y - p.y).abs() as u32).max(1),
+                                );
+                                self.selection =
+                                    Some(if matches!(self.tool, Tool::Ellipse | Tool::Radial) {
+                                        Selection::Ellipse(r)
+                                    } else {
+                                        Selection::Rect(r)
+                                    });
+                            }
+                        }
+                        Tool::Linear => {
+                            if let Some(a) = self.drag_from {
+                                self.gradient = Some(((a.x, a.y), (p.x, p.y)));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Message::PointerDown => {
+                self.pressed = true;
+                self.drag_from = Some(self.pointer);
+                match self.tool {
+                    Tool::Polygon => {
+                        if self.points.len() < 1000 {
+                            self.points.push((self.pointer.x, self.pointer.y))
+                        }
+                    }
+                    Tool::Lasso | Tool::Brush => {
+                        self.points = vec![(self.pointer.x, self.pointer.y)]
+                    }
+                    _ => {}
+                }
+            }
+            Message::PointerUp => {
+                self.pressed = false;
+                match self.tool {
+                    Tool::Lasso if self.points.len() >= 3 => {
+                        self.selection = Some(Selection::Polygon(std::mem::take(&mut self.points)))
+                    }
+                    Tool::Brush if !self.points.is_empty() => {
+                        self.selection = Some(Selection::Brush {
+                            points: std::mem::take(&mut self.points),
+                            radius: self.brush_radius,
+                        })
+                    }
+                    _ => {}
+                }
+            }
+            Message::Escape => {
+                self.menu = None;
+                self.selection = None;
+                self.points.clear();
+                self.gradient = None;
+                self.focused_finding = None;
+                if self.fullscreen {
+                    return self.update(Message::Fullscreen(false));
+                }
+            }
+            Message::Enter => {
+                if self.tool == Tool::Polygon && self.points.len() >= 3 {
+                    self.selection = Some(Selection::Polygon(std::mem::take(&mut self.points)));
+                } else if self.tool == Tool::Crop
+                    && let Some(r) = self.selection_rect()
+                {
+                    self.selection = None;
+                    return self.update(Message::Apply(Operation::Crop(r)));
+                } else if matches!(self.tool, Tool::Linear | Tool::Radial) {
+                    return self.update(Message::NewLayer);
+                } else if self.selection.is_some() {
+                    return self.update(Message::ConcealSelection);
+                }
+            }
+            Message::ProxyLoaded(i, r) => match r {
+                Ok(p) => {
+                    if let Some(e) = self.entries.get_mut(i) {
+                        e.proxy = Some(p);
+                    }
+                    return self.request_render(i);
+                }
+                Err(e) => self.note(e),
+            },
+            Message::Rendered(i, generation, r) => {
+                let mut again = false;
+                if let Some(e) = self.entries.get_mut(i) {
+                    e.rendering = false;
+                    match r {
+                        Ok(ed) => {
+                            self.perf
+                                .samples
+                                .push(("Preview render (proxy)".into(), ed.ms));
+                            e.edited = Some(ed);
+                        }
+                        Err(err) => {
+                            photo_log::error(Component::Edit, Code::EditFailed, &err);
+                            self.status = err;
+                        }
+                    }
+                    again = e.dirty || e.generation != generation;
+                }
+                if self.perf.samples.len() > 400 {
+                    self.perf.samples.drain(..200);
+                }
+                if again {
+                    if let Some(e) = self.entries.get_mut(i) {
+                        e.generation = e.generation.saturating_sub(1);
+                    }
+                    return self.request_render(i);
+                }
+            }
+            Message::Apply(op) => {
+                let Some(i) = self.selected else {
+                    return Task::none();
+                };
+                self.snapshot();
+                self.editing = false;
+                let label = op.label();
+                if let Err(e) = self.entries[i].edits.push(op) {
+                    self.note(format!("{e:#}"));
+                    return Task::none();
+                }
+                self.menu = None;
+                self.note(format!("Applied: {label}"));
+                return self.after_edit(i);
+            }
+            Message::Undo => {
+                self.menu = None;
+                if let Some(i) = self.selected
+                    && let Some(prev) = self.entries[i].undo.pop()
+                {
+                    let cur = std::mem::replace(&mut self.entries[i].edits, prev);
+                    self.entries[i].redo.push(cur);
+                    self.active_layer = None;
+                    self.editing = false;
+                    self.note("Undo");
+                    return self.after_edit(i);
+                }
+            }
+            Message::Redo => {
+                self.menu = None;
+                if let Some(i) = self.selected
+                    && let Some(next) = self.entries[i].redo.pop()
+                {
+                    let cur = std::mem::replace(&mut self.entries[i].edits, next);
+                    self.entries[i].undo.push(cur);
+                    self.active_layer = None;
+                    self.editing = false;
+                    self.note("Redo");
+                    return self.after_edit(i);
+                }
+            }
+            Message::Adjust(f, v) => {
+                if !v.is_finite() {
+                    return Task::none();
+                }
+                if f == Field::Opacity {
+                    return self.modify_layer(|_, o, _| *o = v.clamp(0., 1.));
+                }
+                let band = self.band;
+                return self.modify_layer(move |a, _, _| set_field(a, f, band, v));
+            }
+            Message::LayerBlend(b) => {
+                self.editing = false;
+                return self.modify_layer(move |_, _, bl| *bl = b);
+            }
+            Message::Commit => self.editing = false,
+            Message::ResetLayer => {
+                self.editing = false;
+                return self.modify_layer(|a, o, b| {
+                    *a = Adjustments::default();
+                    *o = 1.;
+                    *b = BlendMode::Normal;
+                });
+            }
+            Message::AutoTone => {
+                self.menu = None;
+                let Some(ed) = self.current().and_then(|e| e.edited.as_ref()) else {
+                    return Task::none();
+                };
+                let auto = photo_edit::color::auto_adjust(&ed.pixels);
+                self.editing = false;
+                self.note(format!(
+                    "Auto tone: exposure {:+.2} EV, temperature {:+.2}, tint {:+.2}",
+                    auto.exposure, auto.temperature, auto.tint
+                ));
+                return self.modify_layer(move |a, _, _| {
+                    a.exposure = (a.exposure + auto.exposure).clamp(-5., 5.);
+                    a.temperature = (a.temperature + auto.temperature).clamp(-1., 1.);
+                    a.tint = (a.tint + auto.tint).clamp(-1., 1.);
+                });
+            }
+            Message::Preset(name) => {
+                if let Some((_, p)) = photo_edit::color::presets()
+                    .into_iter()
+                    .find(|(n, _)| *n == name)
+                {
+                    self.editing = false;
+                    return self.modify_layer(move |a, _, _| {
+                        let lut = a.lut.take();
+                        *a = p;
+                        a.lut = lut;
+                    });
+                }
+            }
+            Message::Band(b) => self.band = b.min(7),
+            Message::Layer(k) => self.active_layer = k,
+            Message::LayerToggle(k) => {
+                if let Some(i) = self.selected {
+                    self.snapshot();
+                    if self.entries[i].edits.toggle_visible(k) {
+                        return self.after_edit(i);
+                    }
+                }
+            }
+            Message::LayerMove(k, up) => {
+                if let Some(i) = self.selected {
+                    self.snapshot();
+                    if self.entries[i].edits.move_layer(k, up) {
+                        self.active_layer = None;
+                        return self.after_edit(i);
+                    }
+                }
+            }
+            Message::LayerDelete(k) => {
+                if let Some(i) = self.selected {
+                    self.snapshot();
+                    if self.entries[i].edits.remove(k) {
+                        self.active_layer = None;
+                        return self.after_edit(i);
+                    }
+                }
+            }
+            Message::NewLayer => {
+                let mask = match (&self.selection, self.gradient, self.tool) {
+                    (_, Some((a, b)), Tool::Linear) => Some(LayerMask::Linear {
+                        x0: a.0,
+                        y0: a.1,
+                        x1: b.0,
+                        y1: b.1,
+                    }),
+                    (Some(Selection::Ellipse(r)), _, Tool::Radial) => Some(LayerMask::Radial {
+                        cx: r.x as f32 + r.width as f32 / 2.,
+                        cy: r.y as f32 + r.height as f32 / 2.,
+                        rx: (r.width as f32 / 2.).max(1.),
+                        ry: (r.height as f32 / 2.).max(1.),
+                        feather: 0.6,
+                    }),
+                    (Some(s), _, _) => Some(LayerMask::Selection(s.clone())),
+                    _ => None,
+                };
+                let Some(i) = self.selected else {
+                    return Task::none();
+                };
+                self.snapshot();
+                self.editing = false;
+                let name = if mask.is_some() {
+                    "Local adjustment"
+                } else {
+                    "Adjustment"
+                };
+                let op = Operation::Adjust {
+                    name: name.into(),
+                    adjustments: Box::default(),
+                    mask,
+                    invert: false,
+                    opacity: 1.,
+                    blend: BlendMode::Normal,
+                    visible: true,
+                };
+                if self.entries[i].edits.push(op).is_ok() {
+                    self.active_layer = Some(self.entries[i].edits.active().len() - 1);
+                    self.selection = None;
+                    self.gradient = None;
+                    self.note("Adjustment layer added; the Color Studio now edits this layer.");
+                    return self.after_edit(i);
+                }
+            }
+            Message::Method(m) => {
+                self.method = m;
+                self.strength = match m {
+                    Method::Blur => 12,
+                    Method::Pixelate | Method::Mosaic => 16,
+                    _ => self.strength,
+                };
+            }
+            Message::Strength(s) => self.strength = s,
+            Message::BrushRadius(r) => self.brush_radius = r.clamp(1., 400.),
+            Message::Straighten(a) => self.straighten = a,
+            Message::Lens(k) => self.lens = k,
+            Message::ConcealSelection => {
+                if let Some(sel) = self.selection.take() {
+                    self.points.clear();
+                    return self.update(Message::Apply(Operation::Conceal {
+                        selection: sel,
+                        method: self.method.concealment(self.strength),
+                        invert: false,
+                    }));
+                }
+                self.note("Make a selection first (Rect, Ellipse, Polygon, Lasso or Brush tool).");
+            }
+            Message::ImportLut => {
+                return Task::perform(
+                    async {
+                        let f = rfd::AsyncFileDialog::new()
+                            .add_filter("3D LUT", &["cube"])
+                            .pick_file()
+                            .await
+                            .ok_or_else(|| "cancelled".to_string())?;
+                        let bytes = f.read().await;
+                        if bytes.len() > photo_edit::color::MAX_CUBE_BYTES {
+                            return Err("LUT file too large".into());
+                        }
+                        Lut3d::parse_cube(&String::from_utf8_lossy(&bytes))
+                            .map_err(|e| format!("{e:#}"))
+                    },
+                    Message::LutLoaded,
+                );
+            }
+            Message::LutLoaded(r) => match r {
+                Ok(l) => {
+                    self.editing = false;
+                    self.note(format!("Loaded {0}x{0}x{0} LUT", l.size));
+                    return self.modify_layer(move |a, _, _| a.lut = Some(l));
+                }
+                Err(e) if e == "cancelled" => {}
+                Err(e) => {
+                    photo_log::warn(
+                        Component::Color,
+                        Code::SecurityEvent,
+                        &format!("LUT rejected: {e}"),
+                    );
+                    self.note(format!("LUT rejected: {e}"));
+                }
+            },
+            Message::ExportLut => {
+                let a = self.layer_adjustments();
+                let dir = self.output_dir.trim().to_string();
+                return Task::perform(
+                    async move {
+                        let lut = a.bake_lut(33).map_err(|e| format!("{e:#}"))?;
+                        let d = if dir.is_empty() {
+                            rfd::AsyncFileDialog::new()
+                                .pick_folder()
+                                .await
+                                .map(|f| f.path().to_path_buf())
+                                .ok_or("cancelled")?
+                        } else {
+                            PathBuf::from(dir)
+                        };
+                        photo_core::save_unique(
+                            &d,
+                            "adjustments",
+                            "cube",
+                            lut.to_cube("AI Photo Defense").as_bytes(),
+                        )
+                        .map_err(|e| format!("{e:#}"))
+                    },
+                    Message::ReportSaved,
+                );
+            }
+            Message::Profile(p) => self.profile = p,
+            Message::Scan => {
+                self.menu = None;
+                let targets: Vec<usize> = if self.mode == Mode::Essential {
+                    (0..self.entries.len())
+                        .filter(|k| self.entries[*k].scan.is_none())
+                        .collect()
+                } else {
+                    self.selected.into_iter().collect()
+                };
+                if targets.is_empty() {
+                    return Task::none();
+                }
+                let profile = profile_by_name(&self.profile);
+                self.busy = Some("Scanning".into());
+                for &k in &targets {
+                    self.entries[k].status = "Scanning".into();
+                }
+                let jobs: Vec<(usize, PathBuf, EditStack, u64)> = targets
+                    .iter()
+                    .map(|&k| {
+                        (
+                            k,
+                            self.entries[k].path.clone(),
+                            self.entries[k].edits.clone(),
+                            self.entries[k].generation,
+                        )
+                    })
+                    .collect();
+                return Task::batch(jobs.into_iter().map(|(k, path, edits, generation)| {
+                    let profile = profile.clone();
+                    Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(
+                                move || -> Result<(ScanReport, (u32, u32)), String> {
+                                    let t = Instant::now();
+                                    let p =
+                                        photo_core::load(&path).map_err(|e| format!("{e:#}"))?;
+                                    let pixels =
+                                        edits.render(&p.pixels).map_err(|e| format!("{e:#}"))?;
+                                    let dims = (pixels.width(), pixels.height());
+                                    let r = photo_pipeline::scan_photo(
+                                        &p.with_pixels(pixels),
+                                        &profile,
+                                    );
+                                    photo_log::event(
+                                        Level::Info,
+                                        Component::Privacy,
+                                        Code::ScanCompleted,
+                                        &format!("{} findings", r.findings.len()),
+                                    )
+                                    .duration(t.elapsed())
+                                    .emit();
+                                    Ok((r, dims))
+                                },
+                            )
+                            .await
+                            .unwrap_or_else(|e| Err(e.to_string()))
+                        },
+                        move |r| Message::Scanned(k, generation, r),
+                    )
+                }));
+            }
+            Message::Scanned(i, _generation, r) => {
+                self.busy = None;
+                match r {
+                    Ok((report, dims)) => {
+                        let n = report.findings.len();
+                        if let Some(e) = self.entries.get_mut(i) {
+                            e.status = if n == 0 {
+                                "No findings".into()
+                            } else {
+                                format!("{n} finding(s)")
+                            };
+                            e.scan = Some(ScanState {
+                                dismissed: vec![false; n],
+                                report,
+                                dims,
+                            });
+                        }
+                        self.note(format!("Scan finished: {n} finding(s). Detectors without installed models are listed as not examined."));
+                    }
+                    Err(e) => {
+                        photo_log::error(Component::Privacy, Code::ScanFailed, &e);
+                        if let Some(en) = self.entries.get_mut(i) {
+                            en.status = "Scan failed".into();
+                        }
+                        self.note(e);
+                    }
+                }
+            }
+            Message::FocusFinding(k) => {
+                self.focused_finding = Some(k);
+                if let Some(r) = self
+                    .current()
+                    .and_then(|e| e.scan.as_ref())
+                    .and_then(|s| s.report.findings.get(k))
+                    .and_then(|f| f.region)
+                {
+                    self.selection = Some(Selection::Rect(Rect::new(r.x, r.y, r.width, r.height)));
+                }
+            }
+            Message::Dismiss(k, d) => {
+                if let Some(e) = self.current_mut()
+                    && let Some(s) = e.scan.as_mut()
+                    && k < s.dismissed.len()
+                {
+                    s.dismissed[k] = d;
+                }
+            }
+            Message::ConcealFindings => {
+                let Some(i) = self.selected else {
+                    return Task::none();
+                };
+                let Some(s) = &self.entries[i].scan else {
+                    return Task::none();
+                };
+                if s.dims
+                    != full_dims(
+                        &self.entries[i].edits,
+                        self.entries[i].width,
+                        self.entries[i].height,
+                    )
+                {
+                    self.note("Geometry changed since the scan. Scan again before concealing.");
+                    return Task::none();
+                }
+                let chosen: Vec<Finding> = s
+                    .report
+                    .findings
+                    .iter()
+                    .zip(&s.dismissed)
+                    .filter(|(f, d)| !**d && f.region.is_some())
+                    .map(|(f, _)| f.clone())
+                    .collect();
+                let pref = match self.method {
+                    Method::White => photo_privacy::profiles::RedactionPreference::OpaqueWhite,
+                    Method::Blur => photo_privacy::profiles::RedactionPreference::Blur,
+                    Method::Pixelate | Method::Mosaic => {
+                        photo_privacy::profiles::RedactionPreference::Pixelate
+                    }
+                    Method::Black => photo_privacy::profiles::RedactionPreference::OpaqueBlack,
+                };
+                match photo_pipeline::conceal_findings(&chosen, pref, 4) {
+                    Some(op) => return self.update(Message::Apply(op)),
+                    None => self.note(
+                        "No located findings to conceal. Metadata is always removed on export.",
+                    ),
+                }
+            }
+            Message::Format(f) => self.format = f,
+            Message::Quality(q) => self.quality = q,
+            Message::HighAssurance(h) => self.high_assurance = h,
+            Message::AutoRedact(a) => self.auto_redact = a,
+            Message::EssentialAspect(a) => self.essential_aspect = a,
+            Message::Export {
+                accept_unresolved,
+                all,
+            } => {
+                self.menu = None;
+                return self.start_export(accept_unresolved, all);
+            }
+            Message::Exported(results) => {
+                self.busy = None;
+                let (mut good, mut blocked, mut failed) = (0, 0, 0);
+                for (i, r) in results {
+                    match r {
+                        Ok(s) => {
+                            let Some(e) = self.entries.get_mut(i) else {
+                                continue;
+                            };
+                            match &s {
+                                ExportState::Done { ms, passed, .. } => {
+                                    good += 1;
+                                    e.status = if *passed {
+                                        "Exported, verified".into()
+                                    } else {
+                                        "Exported, findings accepted".into()
+                                    };
+                                    self.perf
+                                        .samples
+                                        .push(("Export (full resolution)".into(), *ms));
+                                }
+                                ExportState::Blocked(_) => {
+                                    blocked += 1;
+                                    e.status = "Blocked: review".into();
+                                }
+                            }
+                            e.export = Some(s);
+                        }
+                        Err(err) => {
+                            failed += 1;
+                            photo_log::error(Component::Export, Code::ExportFailed, &err);
+                            if let Some(e) = self.entries.get_mut(i) {
+                                e.status = "Failed".into();
+                            }
+                        }
+                    }
+                }
+                self.note(format!(
+                    "Export: {good} saved, {blocked} blocked by verification, {failed} failed{}.",
+                    if self.cancel.load(Ordering::Relaxed) {
+                        " (cancelled)"
+                    } else {
+                        ""
+                    }
+                ));
+            }
+            Message::Cancel => {
+                self.cancel.store(true, Ordering::Relaxed);
+                self.note("Cancelling after the current photograph.");
+            }
+            Message::SaveProject => {
+                self.menu = None;
+                let p = self.project();
+                let existing = self.project_path.clone();
+                let dir = self.output_dir.trim().to_string();
+                return Task::perform(
+                    async move {
+                        let path = match existing {
+                            Some(p) => p,
+                            None => {
+                                let mut d = rfd::AsyncFileDialog::new()
+                                    .add_filter(
+                                        "AI Photo Defense project",
+                                        &[photo_project::EXTENSION],
+                                    )
+                                    .set_file_name("project.apdproj");
+                                if !dir.is_empty() {
+                                    d = d.set_directory(&dir);
+                                }
+                                d.save_file()
+                                    .await
+                                    .map(|f| f.path().to_path_buf())
+                                    .ok_or("cancelled")?
+                            }
+                        };
+                        photo_project::save(&path, &p, &photo_project::SaveOptions::default())
+                            .map_err(|e| format!("{e:#}"))?;
+                        Ok(path)
+                    },
+                    Message::ProjectSaved,
+                );
+            }
+            Message::ProjectSaved(r) => match r {
+                Ok(p) => {
+                    self.note(format!("Project saved: {}", short(&p)));
+                    self.project_path = Some(p);
+                    self.dirty_project = false;
+                }
+                Err(e) if e == "cancelled" => {}
+                Err(e) => self.note(e),
+            },
+            Message::OpenProject => {
+                self.menu = None;
+                return Task::perform(
+                    async {
+                        let f = rfd::AsyncFileDialog::new()
+                            .add_filter("AI Photo Defense project", &[photo_project::EXTENSION])
+                            .pick_file()
+                            .await
+                            .ok_or("cancelled")?;
+                        photo_project::open(f.path())
+                            .map(|l| l.project)
+                            .map_err(|e| format!("{e:#}"))
+                    },
+                    Message::ProjectOpened,
+                );
+            }
+            Message::ProjectOpened(r) => match r {
+                Ok(p) => return self.restore(p),
+                Err(e) if e == "cancelled" => {}
+                Err(e) => self.note(e),
+            },
+            Message::RestoreAutosave => {
+                if let Some(p) = self.autosave_offer.take() {
+                    photo_log::event(
+                        Level::Info,
+                        Component::Recovery,
+                        Code::ProjectRecovered,
+                        "autosave restored",
+                    )
+                    .recovered(true)
+                    .emit();
+                    return self.restore(p);
+                }
+            }
+            Message::DiscardAutosave => {
+                self.autosave_offer = None;
+                let _ = std::fs::remove_file(photo_project::autosave_path(
+                    &self.data_dir.join("session.apdproj"),
+                ));
+                self.note("Autosave discarded.");
+            }
+            Message::LibSearch(s) => {
+                self.lib_search = s;
+                self.refresh_library();
+            }
+            Message::LibRating(r) => {
+                self.lib_rating = r;
+                self.refresh_library();
+            }
+            Message::TagInput(t) => self.tag_input = t,
+            Message::ApplyTag => {
+                if let (Some(c), Some(id)) =
+                    (&self.catalog, self.current().and_then(|e| e.catalog_id))
+                {
+                    match c.tag(id, &self.tag_input) {
+                        Ok(()) => self.tag_input.clear(),
+                        Err(e) => self.status = format!("{e:#}"),
+                    }
+                }
+                self.refresh_library();
+            }
+            Message::Page(p) => {
+                self.page = p;
+                if p == TechPage::Performance {
+                    self.refresh_perf();
+                }
+                if p == TechPage::Forensics && self.forensics.is_none() {
+                    return self.update(Message::Forensics);
+                }
+            }
+            Message::LogLevel(l) => self.log_level = l,
+            Message::LogComponent(c) => self.log_component = c,
+            Message::LogSearch(s) => self.log_search = s,
+            Message::CodeLookup(s) => self.code_lookup = s,
+            Message::CopyReport => {
+                self.note("Sanitized diagnostic report copied to the clipboard.");
+                return iced::clipboard::write(self.diagnostic_report());
+            }
+            Message::PreviewReport => {
+                self.report_preview = if self.report_preview.is_some() {
+                    None
+                } else {
+                    Some(self.diagnostic_report())
+                }
+            }
+            Message::SaveReport => {
+                let text = self.diagnostic_report();
+                let dir = self.output_dir.trim().to_string();
+                return Task::perform(
+                    async move {
+                        let d = if dir.is_empty() {
+                            rfd::AsyncFileDialog::new()
+                                .pick_folder()
+                                .await
+                                .map(|f| f.path().to_path_buf())
+                                .ok_or("cancelled")?
+                        } else {
+                            PathBuf::from(dir)
+                        };
+                        photo_core::save_unique(&d, "diagnostic-report", "txt", text.as_bytes())
+                            .map_err(|e| format!("{e:#}"))
+                    },
+                    Message::ReportSaved,
+                );
+            }
+            Message::ReportSaved(r) => match r {
+                Ok(p) => self.note(format!("Saved {}", short(&p))),
+                Err(e) if e == "cancelled" => {}
+                Err(e) => self.note(e),
+            },
+            Message::ClearLogs => {
+                let n = photo_log::clear();
+                self.note(format!(
+                    "Deleted {n} log file(s) and cleared the in-memory log."
+                ));
+            }
+            Message::Retention(d) => {
+                let mut c = photo_log::config();
+                c.retention_days = d.clamp(1, 365);
+                photo_log::configure(c);
+            }
+            Message::Verbosity(l) => {
+                let mut c = photo_log::config();
+                c.min_level = l;
+                photo_log::configure(c);
+            }
+            Message::Lab => {
+                let Some(e) = self.current() else {
+                    return Task::none();
+                };
+                let Some(ExportState::Done { path, .. }) = &e.export else {
+                    self.note(
+                        "Export the selected photograph without geometry edits, then run the lab.",
+                    );
+                    return Task::none();
+                };
+                let (a, b) = (e.path.clone(), path.clone());
+                self.busy = Some("Measuring".into());
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let a = photo_core::load(&a).map_err(|e| e.to_string())?;
+                            let b = photo_core::load(&b).map_err(|e| e.to_string())?;
+                            photo_lab::evaluate(&a.pixels, &b.pixels).map_err(|e| e.to_string())
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    Message::LabDone,
+                );
+            }
+            Message::LabDone(r) => {
+                self.busy = None;
+                match r {
+                    Ok(r) => self.lab = Some(r),
+                    Err(e) => self.note(e),
+                }
+            }
+            Message::Forensics => {
+                let Some(e) = self.current() else {
+                    return Task::none();
+                };
+                let path = e.path.clone();
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let p = photo_core::load(&path).map_err(|e| format!("{e:#}"))?;
+                            Ok(Box::new(photo_privacy::forensics::inspect(&p.bytes)))
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    Message::ForensicsDone,
+                );
+            }
+            Message::ForensicsDone(r) => match r {
+                Ok(f) => self.forensics = Some(f),
+                Err(e) => self.note(e),
+            },
+            Message::Cache(on) => self.cache_enabled = on,
+            Message::ClearCache => {
+                match photo_catalog::ThumbCache::enabled(self.data_dir.join("thumbnails"))
+                    .and_then(|c| c.clear())
+                {
+                    Ok(n) => self.note(format!("Overwrote and deleted {n} cached thumbnail(s).")),
+                    Err(e) => self.note(format!("{e:#}")),
+                }
+            }
+            Message::PaneResized(e) => self.panes.resize(e.split, e.ratio),
+            Message::PaneDragged(pane_grid::DragEvent::Dropped { pane, target }) => {
+                self.panes.drop(pane, target)
+            }
+            Message::PaneDragged(_) => {}
+            Message::PaneMaximize(kind) => {
+                self.menu = None;
+                if self.panes.maximized().is_some() {
+                    self.panes.restore();
+                } else {
+                    let found = self
+                        .panes
+                        .iter()
+                        .find(|(_, k)| **k == kind)
+                        .map(|(p, _)| *p);
+                    if let Some(p) = found {
+                        self.panes.maximize(p);
+                    }
+                }
+            }
+            Message::ResetLayout => {
+                self.panes = default_panes();
+                self.menu = None;
+            }
+            Message::Event(Event::Window(window::Event::FileDropped(p))) => {
+                return self.update(Message::Picked(vec![p]));
+            }
+            Message::Event(Event::Window(window::Event::CloseRequested)) => {
+                let _ = self.update(Message::Autosave);
+                photo_log::info(Component::App, Code::Shutdown, "shutdown");
+                return window::get_latest().and_then(window::close);
+            }
+            Message::Event(Event::Keyboard(keyboard::Event::KeyPressed {
+                key, modifiers, ..
+            })) => return self.shortcut(key, modifiers),
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn restore(&mut self, p: photo_project::Project) -> Task<Message> {
+        let paths: Vec<PathBuf> = p
+            .entries
+            .iter()
+            .map(|e| e.path.clone())
+            .filter(|p| p.is_file())
+            .collect();
+        let missing = p.entries.len() - paths.len();
+        self.entries.clear();
+        self.selected = None;
+        self.profile = p.settings.profile.clone();
+        self.quality = p.settings.quality;
+        self.pending_restore = Some(p);
+        if missing > 0 {
+            photo_log::warn(
+                Component::Project,
+                Code::FileAccess,
+                &format!("{missing} referenced photographs missing"),
+            );
+        }
+        let t = self.update(Message::Picked(paths));
+        if missing > 0 {
+            self.note(format!(
+                "{missing} photograph(s) referenced by the project are missing."
+            ));
+        }
+        t
+    }
+
+    fn start_export(&mut self, accept: bool, all: bool) -> Task<Message> {
+        if self.busy.is_some() || self.entries.is_empty() {
+            return Task::none();
+        }
+        let dir = PathBuf::from(self.output_dir.trim());
+        if self.output_dir.trim().is_empty() || !dir.is_dir() {
+            self.note("Choose an existing output folder first.");
+            return self.update(Message::BrowseOutput);
+        }
+        let targets: Vec<usize> = if all || self.mode == Mode::Essential {
+            (0..self.entries.len()).collect()
+        } else {
+            self.selected.into_iter().collect()
+        };
+        let (f, q) = (self.format, self.quality);
+        let profile = profile_by_name(&self.profile);
+        let (high, auto) = (self.high_assurance, self.auto_redact);
+        let aspect = if self.mode == Mode::Essential {
+            self.essential_aspect
+        } else {
+            None
+        };
+        let jobs: Vec<(usize, PathBuf, EditStack, Option<ScanState>)> = targets
+            .iter()
+            .map(|&i| {
+                (
+                    i,
+                    self.entries[i].path.clone(),
+                    self.entries[i].edits.clone(),
+                    self.entries[i].scan.clone(),
+                )
+            })
+            .collect();
+        for &i in &targets {
+            self.entries[i].status = "Queued".into();
+        }
+        self.cancel.store(false, Ordering::Relaxed);
+        let cancel = self.cancel.clone();
+        self.busy = Some(format!("Exporting {} photograph(s)", jobs.len()));
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let mut out = vec![];
+                    for (i, path, mut edits, scan) in jobs {
+                        if cancel.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        let job = photo_log::new_job();
+                        let t = Instant::now();
+                        let r = (|| -> anyhow::Result<ExportState> {
+                            let p = photo_core::load(&path)?;
+                            if let Some(a) = aspect {
+                                edits.push(Operation::CropAspect(a))?;
+                            }
+                            if auto {
+                                let staged = p.with_pixels(edits.render(&p.pixels)?);
+                                let found = photo_pipeline::scan_photo(&staged, &profile).findings;
+                                if let Some(op) =
+                                    photo_pipeline::conceal_findings(&found, profile.redaction, 4)
+                                {
+                                    edits.push(op)?;
+                                }
+                            }
+                            let risks = if high {
+                                photo_pipeline::pre_export_review(
+                                    &edits,
+                                    scan.as_ref().map(|s| (&s.report, s.dismissed.as_slice())),
+                                    auto,
+                                )
+                            } else {
+                                vec![]
+                            };
+                            let prepared = photo_pipeline::prepare(&p, &edits, f, q, &profile)?;
+                            let v = &prepared.report.verification;
+                            if (!v.passed || !risks.is_empty()) && !accept {
+                                let mut w = risks;
+                                w.extend(v.warnings.clone());
+                                w.extend(
+                                    v.metadata_findings
+                                        .iter()
+                                        .chain(&v.remaining_findings)
+                                        .map(|f| format!("{:?}: {}", f.category, f.description)),
+                                );
+                                photo_log::event(
+                                    Level::Warning,
+                                    Component::Export,
+                                    Code::ExportBlocked,
+                                    &format!("{} unresolved items", w.len()),
+                                )
+                                .job(job)
+                                .emit();
+                                return Ok(ExportState::Blocked(w));
+                            }
+                            let saved = photo_pipeline::publish(&prepared, &path, &dir, f, accept)?;
+                            photo_log::event(
+                                Level::Info,
+                                Component::Export,
+                                Code::ExportVerified,
+                                if saved.verification_passed {
+                                    "verified"
+                                } else {
+                                    "accepted with findings"
+                                },
+                            )
+                            .job(job)
+                            .duration(t.elapsed())
+                            .emit();
+                            Ok(ExportState::Done {
+                                path: saved.image,
+                                passed: saved.verification_passed,
+                                report: Box::new(prepared.report),
+                                ms: t.elapsed().as_secs_f64() * 1000.,
+                            })
+                        })();
+                        out.push((i, r.map_err(|e| format!("{}: {e:#}", short(&path)))));
+                    }
+                    out
+                })
+                .await
+                .unwrap_or_else(|e| vec![(0, Err(e.to_string()))])
+            },
+            Message::Exported,
+        )
+    }
+
+    fn shortcut(&mut self, key: keyboard::Key, m: keyboard::Modifiers) -> Task<Message> {
+        use keyboard::key::Named;
+        if m.command() {
+            return match key.as_ref() {
+                keyboard::Key::Character("o") if m.shift() => {
+                    self.update(Message::OpenFolderDialog)
+                }
+                keyboard::Key::Character("o") => self.update(Message::OpenDialog),
+                keyboard::Key::Character("s") => self.update(Message::SaveProject),
+                keyboard::Key::Character("e") => self.update(Message::Export {
+                    accept_unresolved: false,
+                    all: m.shift(),
+                }),
+                keyboard::Key::Character("z") if m.shift() => self.update(Message::Redo),
+                keyboard::Key::Character("z") => self.update(Message::Undo),
+                keyboard::Key::Character("y") => self.update(Message::Redo),
+                keyboard::Key::Character("p") => self.update(Message::Scan),
+                keyboard::Key::Character("1") => self.update(Message::Mode(Mode::Essential)),
+                keyboard::Key::Character("2") => self.update(Message::Mode(Mode::Professional)),
+                keyboard::Key::Character("3") => self.update(Message::Mode(Mode::Technical)),
+                _ => Task::none(),
+            };
+        }
+        match key.as_ref() {
+            keyboard::Key::Named(Named::Escape) => return self.update(Message::Escape),
+            keyboard::Key::Named(Named::Enter) => return self.update(Message::Enter),
+            keyboard::Key::Named(Named::F11) => {
+                return self.update(Message::Fullscreen(!self.fullscreen));
+            }
+            keyboard::Key::Named(Named::Tab) => {
+                return if m.shift() {
+                    iced::widget::focus_previous()
+                } else {
+                    iced::widget::focus_next()
+                };
+            }
+            keyboard::Key::Named(Named::ArrowRight) if self.mode != Mode::Technical => {
+                if let Some(i) = self.selected
+                    && i + 1 < self.entries.len()
+                {
+                    return self.update(Message::Select(i + 1));
+                }
+            }
+            keyboard::Key::Named(Named::ArrowLeft) if self.mode != Mode::Technical => {
+                if let Some(i) = self.selected
+                    && i > 0
+                {
+                    return self.update(Message::Select(i - 1));
+                }
+            }
+            keyboard::Key::Character(c) if self.mode == Mode::Professional && !m.alt() => {
+                let c = c.to_ascii_lowercase();
+                if let Some(t) = Tool::ALL.iter().find(|t| t.key().eq_ignore_ascii_case(&c)) {
+                    return self.update(Message::Tool(*t));
+                }
+                match c.as_str() {
+                    "\\" => {
+                        return self.update(Message::View(if self.view == ViewMode::Before {
+                            ViewMode::Edited
+                        } else {
+                            ViewMode::Before
+                        }));
+                    }
+                    "y" => {
+                        return self.update(Message::View(if self.view == ViewMode::Split {
+                            ViewMode::Edited
+                        } else {
+                            ViewMode::Split
+                        }));
+                    }
+                    "j" => return self.update(Message::Clipping),
+                    "o" => return self.update(Message::Thirds),
+                    "f" => return self.update(Message::Fullscreen(!self.fullscreen)),
+                    d if d.len() == 1
+                        && d.as_bytes()[0].is_ascii_digit()
+                        && d.as_bytes()[0] <= b'5' =>
+                    {
+                        if let Some(i) = self.selected {
+                            return self.update(Message::Rating(i, d.parse().unwrap_or(0)));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn refresh_perf(&mut self) {
+        if self.mode != Mode::Technical {
+            return;
+        }
+        let Some(sys) = self.sys.as_mut() else { return };
+        sys.refresh_cpu_usage();
+        sys.refresh_memory();
+        if let Ok(pid) = sysinfo::get_current_pid() {
+            sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[pid]), true);
+            self.perf.process_mem = sys.process(pid).map(|p| p.memory());
+        }
+        let cpu = sys.global_cpu_usage();
+        self.perf.cpu = (cpu > 0.).then_some(cpu);
+        self.perf.mem_used = Some(sys.used_memory());
+        self.perf.mem_total = Some(sys.total_memory());
+        if self.page == TechPage::Performance {
+            let out = PathBuf::from(self.output_dir.trim());
+            let target = if out.is_dir() {
+                std::fs::canonicalize(out).unwrap_or_default()
+            } else {
+                std::fs::canonicalize(&self.data_dir).unwrap_or_default()
+            };
+            // Windows canonical paths carry the extended-length prefix; mount points do not.
+            let target = PathBuf::from(
+                target
+                    .to_string_lossy()
+                    .trim_start_matches(r"\\?\")
+                    .to_string(),
+            );
+            let Ok(disks) = sysinfo::Disks::new_with_refreshed_list() else {
+                return;
+            };
+            self.perf.disk_free = disks
+                .iter()
+                .filter(|d| target.starts_with(d.mount_point()))
+                .max_by_key(|d| d.mount_point().as_os_str().len())
+                .map(|d| d.available_space());
+        }
+    }
+
+    pub fn diagnostic_report(&self) -> String {
+        let p = &self.perf;
+        photo_log::report(&[
+            ("mode", self.mode.to_string()),
+            ("photos in collection", self.entries.len().to_string()),
+            ("cpu cores", p.cores.to_string()),
+            (
+                "system memory MiB",
+                p.mem_total
+                    .map(|m| (m / 1_048_576).to_string())
+                    .unwrap_or("unknown".into()),
+            ),
+            ("gpu", "not used (CPU renderer)".into()),
+            ("models installed", "none".into()),
+            (
+                "unclean previous shutdown",
+                self.unclean_shutdown.to_string(),
+            ),
+            ("dependencies", DEPENDENCIES.into()),
+        ])
+    }
+
+    fn subscription(&self) -> Subscription<Message> {
+        let mut subs = vec![
+            iced::event::listen_with(|e, status, _| match e {
+                Event::Keyboard(keyboard::Event::KeyPressed { .. })
+                    if status == iced::event::Status::Captured =>
+                {
+                    None
+                }
+                Event::Keyboard(_)
+                | Event::Window(window::Event::FileDropped(_))
+                | Event::Window(window::Event::CloseRequested) => Some(Message::Event(e)),
+                _ => None,
+            }),
+            iced::time::every(Duration::from_secs(60)).map(|_| Message::Autosave),
+        ];
+        if self.mode == Mode::Technical {
+            subs.push(iced::time::every(Duration::from_secs(2)).map(|_| Message::Tick));
+        }
+        Subscription::batch(subs)
+    }
+}
+
+pub fn run() -> iced::Result {
+    let mut args = std::env::args_os().skip(1);
+    let mut paths = vec![];
+    let mut mode = None;
+    let mut output = String::new();
+    let mut safe = false;
+    let mut appearance = theme::Appearance::Graphite;
+    while let Some(a) = args.next() {
+        match a.to_str() {
+            Some("--mode") => mode = args.next().and_then(|m| m.into_string().ok()),
+            Some("--output") => {
+                output = args
+                    .next()
+                    .and_then(|m| m.into_string().ok())
+                    .unwrap_or_default()
+            }
+            Some("--safe-mode") => safe = true,
+            Some("--light") => appearance = theme::Appearance::Paper,
+            _ => paths.push(PathBuf::from(a)),
+        }
+    }
+    iced::application("AI Photo Defense", App::update, views::view)
+        .subscription(App::subscription)
+        .theme(|a: &App| theme::theme(a.appearance))
+        .default_font(iced::Font::with_name(if cfg!(target_os = "windows") {
+            "Segoe UI"
+        } else if cfg!(target_os = "macos") {
+            "Helvetica Neue"
+        } else {
+            "DejaVu Sans"
+        }))
+        .window(window::Settings {
+            size: iced::Size::new(1280., 760.),
+            min_size: Some(iced::Size::new(900., 560.)),
+            exit_on_close_request: false,
+            ..Default::default()
+        })
+        .run_with(move || {
+            let mut app = App::new(safe);
+            app.appearance = appearance;
+            app.output_dir = output;
+            app.mode = match mode.as_deref() {
+                Some("essential") => Mode::Essential,
+                Some("technical") => Mode::Technical,
+                _ => Mode::Professional,
+            };
+            let import = app.update(Message::Picked(paths));
+            (
+                app,
+                Task::batch([
+                    import,
+                    window::get_latest().and_then(|id| window::maximize(id, true)),
+                    window::get_latest().and_then(window::gain_focus),
+                ]),
+            )
+        })
+}

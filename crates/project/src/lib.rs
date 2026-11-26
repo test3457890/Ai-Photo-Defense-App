@@ -40,7 +40,12 @@ pub struct Settings {
 }
 impl Default for Settings {
     fn default() -> Self {
-        Self { profile: "Social Media".into(), format: "png".into(), quality: 92, mode: "Professional".into() }
+        Self {
+            profile: "Social Media".into(),
+            format: "png".into(),
+            quality: 92,
+            mode: "Professional".into(),
+        }
     }
 }
 
@@ -56,18 +61,34 @@ pub struct Project {
 }
 impl Default for Project {
     fn default() -> Self {
-        Self { schema_version: SCHEMA, name: "Untitled".into(), entries: vec![], settings: Settings::default(), saved_ms: 0 }
+        Self {
+            schema_version: SCHEMA,
+            name: "Untitled".into(),
+            entries: vec![],
+            settings: Settings::default(),
+            saved_ms: 0,
+        }
     }
 }
 impl Project {
     pub fn validate(&self) -> Result<()> {
-        ensure!(self.schema_version == SCHEMA, "Unsupported project version {}", self.schema_version);
+        ensure!(
+            self.schema_version == SCHEMA,
+            "Unsupported project version {}",
+            self.schema_version
+        );
         ensure!(self.name.len() <= 200, "Project name too long");
         ensure!(self.entries.len() <= 100_000, "Too many entries");
         for e in &self.entries {
             ensure!(e.rating <= 5, "Rating out of range");
-            ensure!(e.tags.len() <= 64 && e.tags.iter().all(|t| t.len() <= 64), "Too many or too long tags");
-            ensure!(e.edits.active().len() <= photo_edit::MAX_OPERATIONS, "Edit history too long");
+            ensure!(
+                e.tags.len() <= 64 && e.tags.iter().all(|t| t.len() <= 64),
+                "Too many or too long tags"
+            );
+            ensure!(
+                e.edits.active().len() <= photo_edit::MAX_OPERATIONS,
+                "Edit history too long"
+            );
         }
         Ok(())
     }
@@ -76,7 +97,10 @@ impl Project {
         Ok(serde_json::to_vec_pretty(self)?)
     }
     pub fn from_bytes(b: &[u8]) -> Result<Self> {
-        ensure!(b.len() as u64 <= MAX_PROJECT_BYTES, "Project file too large");
+        ensure!(
+            b.len() as u64 <= MAX_PROJECT_BYTES,
+            "Project file too large"
+        );
         let p: Project = serde_json::from_slice(b).context("Project file is not valid")?;
         p.validate()?;
         Ok(p)
@@ -84,14 +108,22 @@ impl Project {
 }
 
 fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 fn read_bounded(path: &Path) -> Result<Vec<u8>> {
     let meta = std::fs::symlink_metadata(path)?;
-    ensure!(meta.is_file() && !meta.file_type().is_symlink(), "Project path must be a regular file");
+    ensure!(
+        meta.is_file() && !meta.file_type().is_symlink(),
+        "Project path must be a regular file"
+    );
     ensure!(meta.len() <= MAX_PROJECT_BYTES, "Project file too large");
     let mut b = vec![];
-    std::fs::File::open(path)?.take(MAX_PROJECT_BYTES + 1).read_to_end(&mut b)?;
+    std::fs::File::open(path)?
+        .take(MAX_PROJECT_BYTES + 1)
+        .read_to_end(&mut b)?;
     Ok(b)
 }
 pub fn backup_path(p: &Path) -> PathBuf {
@@ -103,15 +135,22 @@ pub fn autosave_path(p: &Path) -> PathBuf {
 
 /// Writes bytes atomically: temp file in the same directory, fsync, rename over target.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let dir = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     ensure!(dir.is_dir(), "Project folder must exist");
     if let Ok(m) = std::fs::symlink_metadata(path) {
-        ensure!(!m.file_type().is_symlink(), "Refusing to write through a symbolic link");
+        ensure!(
+            !m.file_type().is_symlink(),
+            "Refusing to write through a symbolic link"
+        );
     }
     let mut t = tempfile::NamedTempFile::new_in(dir)?;
     t.write_all(bytes)?;
     t.as_file().sync_all()?;
-    t.persist(path).map_err(|e| anyhow::anyhow!("Atomic save failed: {}", e.error))?;
+    t.persist(path)
+        .map_err(|e| anyhow::anyhow!("Atomic save failed: {}", e.error))?;
     Ok(())
 }
 
@@ -136,7 +175,9 @@ pub fn save(path: &Path, project: &Project, opts: &SaveOptions) -> Result<()> {
         write_atomic(&backup_path(path), &old)?;
         if opts.checkpoints > 0 {
             let cp = path.with_extension(format!("{}.{EXTENSION}", p.saved_ms));
-            let cp = checkpoint_dir(path).map(|d| d.join(cp.file_name().unwrap_or_default())).unwrap_or(cp);
+            let cp = checkpoint_dir(path)
+                .map(|d| d.join(cp.file_name().unwrap_or_default()))
+                .unwrap_or(cp);
             if let Some(d) = cp.parent() {
                 let _ = std::fs::create_dir_all(d);
             }
@@ -151,7 +192,11 @@ pub fn save(path: &Path, project: &Project, opts: &SaveOptions) -> Result<()> {
             Ok(())
         }
         Err(e) => {
-            photo_log::error(Component::Project, Code::ProjectSaveFailed, &format!("{e:#}"));
+            photo_log::error(
+                Component::Project,
+                Code::ProjectSaveFailed,
+                &format!("{e:#}"),
+            );
             Err(e)
         }
     }
@@ -161,9 +206,16 @@ fn checkpoint_dir(path: &Path) -> Option<PathBuf> {
     Some(path.parent()?.join(format!(".{stem}-checkpoints")))
 }
 pub fn checkpoints(path: &Path) -> Vec<PathBuf> {
-    let Some(d) = checkpoint_dir(path) else { return vec![] };
+    let Some(d) = checkpoint_dir(path) else {
+        return vec![];
+    };
     let mut v: Vec<PathBuf> = std::fs::read_dir(d)
-        .map(|r| r.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == EXTENSION)).collect())
+        .map(|r| {
+            r.filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|e| e == EXTENSION))
+                .collect()
+        })
         .unwrap_or_default();
     v.sort();
     v
@@ -207,16 +259,27 @@ pub fn open(path: &Path) -> Result<Loaded> {
         Ok(p) => (p, Source::Project),
         Err(e) => {
             photo_log::warn(Component::Project, Code::ProjectCorrupt, &format!("{e:#}"));
-            warnings.push(format!("Project file unreadable ({e}); using last valid backup."));
+            warnings.push(format!(
+                "Project file unreadable ({e}); using last valid backup."
+            ));
             match read_bounded(&backup_path(path)).and_then(|b| Project::from_bytes(&b)) {
                 Ok(p) => {
-                    photo_log::event(photo_log::Level::Warning, Component::Recovery, Code::ProjectRecovered, "restored from backup").recovered(true).emit();
+                    photo_log::event(
+                        photo_log::Level::Warning,
+                        Component::Recovery,
+                        Code::ProjectRecovered,
+                        "restored from backup",
+                    )
+                    .recovered(true)
+                    .emit();
                     (p, Source::Backup)
                 }
-                Err(_) => match read_bounded(&autosave_path(path)).and_then(|b| Project::from_bytes(&b)) {
-                    Ok(p) => (p, Source::Autosave),
-                    Err(_) => bail!("No valid project, backup or autosave could be read"),
-                },
+                Err(_) => {
+                    match read_bounded(&autosave_path(path)).and_then(|b| Project::from_bytes(&b)) {
+                        Ok(p) => (p, Source::Autosave),
+                        Err(_) => bail!("No valid project, backup or autosave could be read"),
+                    }
+                }
             }
         }
     };
@@ -224,7 +287,12 @@ pub fn open(path: &Path) -> Result<Loaded> {
         .ok()
         .and_then(|b| Project::from_bytes(&b).ok())
         .filter(|a| a.saved_ms > project.saved_ms && source != Source::Autosave);
-    Ok(Loaded { project, source, autosave_available, warnings })
+    Ok(Loaded {
+        project,
+        source,
+        autosave_available,
+        warnings,
+    })
 }
 
 /// Marks a running session. If a previous lock is still present at start, the last session
@@ -239,10 +307,19 @@ impl SessionGuard {
         let lock = dir.join("session.lock");
         let previous_unclean = lock.exists();
         if previous_unclean {
-            photo_log::event(photo_log::Level::Warning, Component::Recovery, Code::UncleanShutdown, "previous session ended unexpectedly").emit();
+            photo_log::event(
+                photo_log::Level::Warning,
+                Component::Recovery,
+                Code::UncleanShutdown,
+                "previous session ended unexpectedly",
+            )
+            .emit();
         }
         write_atomic(&lock, format!("{}\n", std::process::id()).as_bytes())?;
-        Ok(Self { lock, previous_unclean })
+        Ok(Self {
+            lock,
+            previous_unclean,
+        })
     }
     pub fn crash_marker(&self) -> PathBuf {
         self.lock.with_file_name("last-crash")
@@ -256,7 +333,9 @@ impl Drop for SessionGuard {
 
 /// Removes orphaned temporary files left by interrupted atomic writes.
 pub fn clean_temp_files(dir: &Path) -> usize {
-    let Ok(rd) = std::fs::read_dir(dir) else { return 0 };
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return 0;
+    };
     rd.filter_map(|e| e.ok())
         .filter(|e| e.file_name().to_string_lossy().starts_with(".tmp"))
         .filter(|e| std::fs::symlink_metadata(e.path()).is_ok_and(|m| m.is_file()))
@@ -273,7 +352,13 @@ mod tests {
         for i in 0..n {
             let mut edits = EditStack::new();
             edits.push(Operation::Rotate90).unwrap();
-            p.entries.push(ProjectEntry { path: format!("photo{i}.png").into(), edits, rating: 3, tags: vec!["trip".into()], flagged: false });
+            p.entries.push(ProjectEntry {
+                path: format!("photo{i}.png").into(),
+                edits,
+                rating: 3,
+                tags: vec!["trip".into()],
+                flagged: false,
+            });
         }
         p
     }
@@ -290,7 +375,13 @@ mod tests {
         assert_eq!(l.project.entries.len(), 5);
         assert_eq!(l.source, Source::Project);
         assert_eq!(checkpoints(&path).len(), 2);
-        assert_eq!(Project::from_bytes(&std::fs::read(backup_path(&path)).unwrap()).unwrap().entries.len(), 4);
+        assert_eq!(
+            Project::from_bytes(&std::fs::read(backup_path(&path)).unwrap())
+                .unwrap()
+                .entries
+                .len(),
+            4
+        );
     }
     #[test]
     fn corrupted_project_recovers_from_backup_and_is_never_overwritten_by_garbage() {
@@ -306,7 +397,13 @@ mod tests {
         assert_eq!(l.project.entries.len(), 1);
         // Saving again must not copy the corrupt file over the valid backup.
         save(&path, &sample(3), &SaveOptions::default()).unwrap();
-        assert_eq!(Project::from_bytes(&std::fs::read(backup_path(&path)).unwrap()).unwrap().entries.len(), 1);
+        assert_eq!(
+            Project::from_bytes(&std::fs::read(backup_path(&path)).unwrap())
+                .unwrap()
+                .entries
+                .len(),
+            1
+        );
         // Hostile content is rejected.
         assert!(Project::from_bytes(br#"{"schema_version":99,"name":"x","entries":[]}"#).is_err());
         assert!(Project::from_bytes(b"\xff\xfe garbage").is_err());
@@ -323,7 +420,10 @@ mod tests {
         std::fs::write(autosave_path(&path), b"{broken").unwrap();
         assert!(open(&path).unwrap().autosave_available.is_none());
         save(&path, &sample(2), &SaveOptions::default()).unwrap();
-        assert!(!autosave_path(&path).exists(), "explicit save clears the journal");
+        assert!(
+            !autosave_path(&path).exists(),
+            "explicit save clears the journal"
+        );
     }
     #[test]
     fn session_lock_detects_unclean_shutdown_and_temp_cleanup() {
