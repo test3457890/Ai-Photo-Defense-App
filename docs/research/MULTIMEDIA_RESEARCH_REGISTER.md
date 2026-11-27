@@ -84,6 +84,8 @@ Read from each project's official page, repository, model card or paper by the G
 | MediaInfoLib | BSD-2-Clause | - | C++ |
 | avio | MIT OR Apache-2.0 | - | wraps FFmpeg (LGPL/GPL inherited) |
 | Symphonia AIFF | MPL-2.0 | - | `aiff` feature since 0.5.4: **now enabled** |
+| `filmcraft-opus` (0.9.0) | MIT OR Apache-2.0 (crates.io, Cargo.lock) | Pure-Rust Opus decoder (RFC 6716/8251) | **Yes** (behind `opus` feature) | Decodes Opus in Ogg and WebM/MKV inside `photo_media::audio::Decoder` |
+| `oxideav-wma` (0.0.5) | MIT (crates.io) | Pure-Rust WMA v1/v2 baseline decoder | No | Early `0.0.5` release (no WMA Pro/Lossless, no ASF demuxer in Symphonia); WMA kept unsupported |
 
 Consequence: voice-cloning protection and spoken-content detection are no longer blocked by licensing. They are blocked by implementation and validation work: porting ECAPA-TDNN (or GE2E) and Whisper to candle, converting weights, and measuring against real cloning systems with a De-AntiFake purification test. Antigravity's raw notes are not committed.
 

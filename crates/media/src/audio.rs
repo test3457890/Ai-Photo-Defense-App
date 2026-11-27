@@ -32,9 +32,15 @@ pub struct StreamInfo {
     pub findings: Vec<Finding>,
 }
 
+enum CodecDecoder {
+    Symphonia(Box<dyn symphonia::core::codecs::Decoder>),
+    #[cfg(feature = "opus")]
+    Opus(filmcraft_opus::Decoder),
+}
+
 pub struct Decoder {
     format: Box<dyn FormatReader>,
-    decoder: Box<dyn symphonia::core::codecs::Decoder>,
+    decoder: CodecDecoder,
     track: u32,
     pub info: StreamInfo,
     pub decoded_frames: u64,
@@ -163,10 +169,38 @@ impl Decoder {
         let codec = symphonia::default::get_codecs()
             .get_codec(p.codec)
             .map(|d| d.short_name.to_string())
-            .unwrap_or_else(|| "unknown".into());
-        let decoder = symphonia::default::get_codecs()
-            .make(p, &DecoderOptions::default())
-            .context("No decoder for this audio codec")?;
+            .unwrap_or_else(|| {
+                if p.codec == symphonia::core::codecs::CODEC_TYPE_OPUS {
+                    "opus".into()
+                } else {
+                    "unknown".into()
+                }
+            });
+        #[cfg(feature = "opus")]
+        let (decoder, sample_rate) = if p.codec == symphonia::core::codecs::CODEC_TYPE_OPUS {
+            let mut dec = if let Some(extra) = p.extra_data.as_deref()
+                && extra.starts_with(b"OpusHead")
+            {
+                filmcraft_opus::Decoder::new(extra)
+                    .map_err(|e| anyhow::anyhow!("Invalid OpusHead: {e}"))?
+            } else {
+                filmcraft_opus::Decoder::simple(48_000, channels)
+                    .map_err(|e| anyhow::anyhow!("Invalid Opus stream: {e}"))?
+            };
+            dec.set_trim_pre_skip(true);
+            (CodecDecoder::Opus(dec), 48_000)
+        } else {
+            let dec = symphonia::default::get_codecs()
+                .make(p, &DecoderOptions::default())
+                .context("No decoder for this audio codec")?;
+            (CodecDecoder::Symphonia(dec), sample_rate)
+        };
+        #[cfg(not(feature = "opus"))]
+        let decoder = CodecDecoder::Symphonia(
+            symphonia::default::get_codecs()
+                .make(p, &DecoderOptions::default())
+                .context("No decoder for this audio codec")?,
+        );
         let info = StreamInfo {
             container: String::new(),
             codec,
@@ -228,31 +262,60 @@ impl Decoder {
             if packet.track_id() != self.track {
                 continue;
             }
-            match self.decoder.decode(&packet) {
-                Ok(buf) => {
-                    let spec = *buf.spec();
-                    ensure!(
-                        spec.channels.count() == self.info.channels,
-                        "Channel layout changed mid-stream"
-                    );
-                    let mut sb = SampleBuffer::<f32>::new(buf.capacity() as u64, spec);
-                    sb.copy_interleaved_ref(buf);
-                    let s = sb.samples().to_vec();
-                    self.decoded_frames += (s.len() / self.info.channels) as u64;
-                    ensure!(
-                        self.decoded_frames <= MAX_FRAMES,
-                        "Decoded duration exceeds the 12-hour limit"
-                    );
-                    if s.is_empty() {
-                        continue;
+            match &mut self.decoder {
+                CodecDecoder::Symphonia(dec) => match dec.decode(&packet) {
+                    Ok(buf) => {
+                        let spec = *buf.spec();
+                        ensure!(
+                            spec.channels.count() == self.info.channels,
+                            "Channel layout changed mid-stream"
+                        );
+                        let mut sb = SampleBuffer::<f32>::new(buf.capacity() as u64, spec);
+                        sb.copy_interleaved_ref(buf);
+                        let s = sb.samples().to_vec();
+                        self.decoded_frames += (s.len() / self.info.channels) as u64;
+                        ensure!(
+                            self.decoded_frames <= MAX_FRAMES,
+                            "Decoded duration exceeds the 12-hour limit"
+                        );
+                        if s.is_empty() {
+                            continue;
+                        }
+                        return Ok(Some(s));
                     }
-                    return Ok(Some(s));
-                }
-                Err(SymError::DecodeError(_)) => {
-                    self.decode_errors += 1;
-                    ensure!(self.decode_errors < 1000, "Too many corrupt audio packets");
-                }
-                Err(e) => return Err(e.into()),
+                    Err(SymError::DecodeError(_)) => {
+                        self.decode_errors += 1;
+                        ensure!(self.decode_errors < 1000, "Too many corrupt audio packets");
+                    }
+                    Err(e) => return Err(e.into()),
+                },
+                #[cfg(feature = "opus")]
+                CodecDecoder::Opus(dec) => match dec.decode(Some(&packet.data)) {
+                    Ok(planar) => {
+                        let ch = self.info.channels;
+                        ensure!(planar.len() == ch, "Opus channel count changed mid-stream");
+                        let frames = planar.first().map_or(0, Vec::len);
+                        if frames == 0 {
+                            continue;
+                        }
+                        self.decoded_frames += frames as u64;
+                        ensure!(
+                            self.decoded_frames <= MAX_FRAMES,
+                            "Decoded duration exceeds the 12-hour limit"
+                        );
+                        let mut s = Vec::with_capacity(frames * ch);
+                        for f in 0..frames {
+                            for c in &planar {
+                                s.push(c[f]);
+                            }
+                        }
+                        return Ok(Some(s));
+                    }
+                    Err(_) => {
+                        self.decode_errors += 1;
+                        ensure!(self.decode_errors < 1000, "Too many corrupt Opus packets");
+                    }
+                },
             }
         }
     }
@@ -853,5 +916,100 @@ pub(crate) mod tests {
             )
             .is_err()
         );
+    }
+
+    #[cfg(feature = "opus")]
+    fn ogg_crc(page: &[u8]) -> u32 {
+        let mut crc = 0u32;
+        for &b in page {
+            crc ^= u32::from(b) << 24;
+            for _ in 0..8 {
+                crc = if (crc & 0x8000_0000) != 0 {
+                    (crc << 1) ^ 0x04C1_1DB7
+                } else {
+                    crc << 1
+                };
+            }
+        }
+        crc
+    }
+
+    #[cfg(feature = "opus")]
+    fn ogg_page(
+        header_type: u8,
+        granule: u64,
+        serial: u32,
+        seq: u32,
+        packets: &[&[u8]],
+    ) -> Vec<u8> {
+        let mut segs = Vec::new();
+        let mut body = Vec::new();
+        for p in packets {
+            let mut rem = p.len();
+            while rem >= 255 {
+                segs.push(255u8);
+                rem -= 255;
+            }
+            segs.push(rem as u8);
+            body.extend_from_slice(p);
+        }
+        let mut page = Vec::with_capacity(27 + segs.len() + body.len());
+        page.extend_from_slice(b"OggS");
+        page.push(0);
+        page.push(header_type);
+        page.extend_from_slice(&granule.to_le_bytes());
+        page.extend_from_slice(&serial.to_le_bytes());
+        page.extend_from_slice(&seq.to_le_bytes());
+        page.extend_from_slice(&0u32.to_le_bytes());
+        page.push(segs.len() as u8);
+        page.extend_from_slice(&segs);
+        page.extend_from_slice(&body);
+        let crc = ogg_crc(&page);
+        page[22..26].copy_from_slice(&crc.to_le_bytes());
+        page
+    }
+
+    #[cfg(feature = "opus")]
+    #[test]
+    fn opus_in_ogg_decodes_analyzes_and_exports_wav() {
+        let mut enc = effectcraft_opusenc::OpusEncoder::new(1, 64_000);
+        let head = enc.opus_head();
+        let mut tags = b"OpusTags".to_vec();
+        tags.extend_from_slice(&4u32.to_le_bytes());
+        tags.extend_from_slice(b"test");
+        tags.extend_from_slice(&0u32.to_le_bytes());
+
+        let mut packets = Vec::new();
+        let frame_n = effectcraft_opusenc::OpusEncoder::FRAME_SIZE;
+        for f in 0..15 {
+            let pcm: Vec<f32> = (0..frame_n)
+                .map(|i| {
+                    let t = (f * frame_n + i) as f32 / 48_000.0;
+                    0.25 * (2.0 * std::f32::consts::PI * 440.0 * t).sin()
+                })
+                .collect();
+            packets.push(enc.encode_float(&pcm));
+        }
+
+        let mut ogg = Vec::new();
+        ogg.extend_from_slice(&ogg_page(0x02, 0, 1, 0, &[&head]));
+        ogg.extend_from_slice(&ogg_page(0x00, 0, 1, 1, &[&tags]));
+        let pkt_refs: Vec<&[u8]> = packets.iter().map(Vec::as_slice).collect();
+        ogg.extend_from_slice(&ogg_page(0x04, (15 * frame_n) as u64, 1, 2, &pkt_refs));
+
+        let dir = tempfile::tempdir().unwrap();
+        let in_ogg = dir.path().join("tone.ogg");
+        let out_wav = dir.path().join("tone.wav");
+        std::fs::write(&in_ogg, &ogg).unwrap();
+
+        let analysis = analyze(&in_ogg).unwrap();
+        assert_eq!(analysis.sample_rate, 48_000);
+        assert_eq!(analysis.channels, 1);
+        assert!(analysis.frames > 0);
+
+        let exp = export_wav(&in_ogg, &out_wav, &[]).unwrap();
+        assert!(exp.verified);
+        let cmp = compare(&in_ogg, &out_wav).unwrap();
+        assert_eq!(cmp.length_difference_frames, 0);
     }
 }

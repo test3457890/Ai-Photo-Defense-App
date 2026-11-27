@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0 (unreleased)
+
+- Optional `opus` feature (`photo-media`, `photo-cli`): pure-Rust Opus decoding in Ogg and WebM/MKV via `filmcraft-opus` (`MIT OR Apache-2.0`), integrated into `photo_media::audio::Decoder` so `analyze`, `export_wav`, and `compare` work on Opus streams. WMA remains unsupported (documented in `FORMAT_COMPATIBILITY.md` and `MULTIMEDIA_RESEARCH_REGISTER.md`).
+
 ## 0.5.0 release candidate (Part 5), 2026-11-26
 
 Refinement and validation pass over Parts 1 to 4. Fixed: text fields painted their text outside the box (a clip widget now confines every field). Added: live and export-time warnings for weak blur or pixelation, backed by a test showing small radii and blocks leave text structure; AIFF, CAF, MP1/MP2 and ADPCM audio decoding; an invisible key-based ownership watermark with CLI `watermark-embed` / `watermark-detect` (survives JPEG quality 70+, not resizing; provenance only, not AI protection). Removed an unused dependency. Research register extended with a licence check of 25 projects: SpeechBrain ECAPA and Resemblyzer (Apache-2.0) and Whisper (MIT) make voice protection and spoken-content detection licence-feasible; FaceShield is research-only and Glaze/Nightshade are closed. Master requirements checklist for Parts 1 to 5 in IMPLEMENTATION_MATRIX.md.
