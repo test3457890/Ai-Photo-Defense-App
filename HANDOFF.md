@@ -18,6 +18,10 @@ Base branch: `origin/main` at `8824d41` (`Merge pull request #11 from test345789
 | `ag/c2pa` | `ded84a5` | Pushed, awaiting Claude review | Optional `c2pa` feature (`c2pa` 0.92.3 `rust_native_crypto`), Forensics inspection + export signing with user-provided PEM chain/key |
 | `ag/installers` | `d4bad1d` | Pushed, awaiting Claude review | `.github/workflows/release.yml` (unsigned Windows MSI, Linux `.deb` + AppImage, macOS `.dmg`, `SHA256SUMS.txt`, CycloneDX SBOM; no releases published) |
 | `ag/gui-smoke` | `88f2e01` | Pushed, awaiting Claude review | `gui-smoke` job in `.github/workflows/ci.yml` (Linux `xvfb-run` + screenshot, macOS launch + `screencapture`, `APD_DATA_DIR/logs` `"started"` & no `ERROR` check) |
+| `ag/branding-logo` | `752d9e2` | Pushed, awaiting Claude review | Original camera-aperture + shield SVG logo, `app.ico`/`app.icns`/`icon-*.png`, `README.md` banner, `photo-desktop` window icon |
+| `ag/video-tracking-verify` | `d132e58` | Pushed (stacked on `ag/video-frames`), awaiting Claude review | Forward/backward NCC object tracking, scene-cut detection, occlusion re-acquisition, independent per-frame export verification, CLI `video-track` |
+| `ag/voice-safe-playback` | `ebe393c` | Pushed, awaiting Claude review | Voice Assistant Safe Playback (`wake_word.rs`, Siri/Google/Alexa/Meta/Bixby/custom, Mute/Bleep + experimental FFT band suppression), CLI `voice-safe-playback` |
+| `ag/ask-ai-accessibility` | `e67037e` | Pushed, awaiting Claude review | Optional `ask-ai` feature (hardware detect, licence registry, loopback-only Ollama, fail-closed approval gate) + Desktop `View > Scale 100%/125%/150%` |
 | `ag/handoff-part5` | (this branch) | Pushed, awaiting Claude review | Updated `HANDOFF.md` with full Part 5 Expanded coordination state |
 
 ### 2. Completed assignments
