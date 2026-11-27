@@ -26,3 +26,11 @@ cargo build --locked -p photo-cli --features experimental-clip
 ```
 
 Read [the experimental model guide](EXPERIMENTAL_CLIP.md) before using it. No model is bundled. Do not download untrusted executable model formats or treat a matching user-provided checksum as proof of publisher identity.
+
+## Unsigned CI installer artifacts
+
+`.github/workflows/release.yml` (triggered by `v*` tags or manual `workflow_dispatch`, without publishing GitHub Releases) builds unsigned preview installer artifacts with `SHA256SUMS.txt`, `LICENSE`, `THIRD_PARTY.md`, `PRIVACY.md`, and a CycloneDX SBOM (`scripts/sbom.py`):
+
+- **Windows x64**: `.msi` (`cargo-wix` + `packaging/wix/main.wxs`). Unsigned builds trigger Windows SmartScreen warnings until code-signed.
+- **Linux x64**: `.deb` (`cargo-deb`) and `.AppImage` (`appimagetool`). Verify `SHA256SUMS.txt` with `sha256sum -c SHA256SUMS.txt`.
+- **macOS (Intel x64 & Apple Silicon arm64)**: `.dmg` containing `AI Photo Defense.app`. Unsigned and un-notarized builds trigger macOS Gatekeeper warnings until signed and notarized.
