@@ -497,6 +497,10 @@ pub enum Message {
     Play(usize, bool),
     PlayReady(Result<Pcm, String>, f32),
     StopAudio,
+    ChooseFaceModel,
+    FaceModelChosen(Option<PathBuf>),
+    SelectFace(photo_privacy::Rect),
+    SelectAllFaces,
     PaneResized(pane_grid::ResizeEvent),
     PaneDragged(pane_grid::DragEvent),
     PaneMaximize(Pane),
@@ -574,6 +578,7 @@ pub struct App {
     pub seg_end: String,
     pub player: Option<Player>,
     pub playing: Option<(usize, bool)>,
+    pub face_model_path: Option<PathBuf>,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -726,6 +731,42 @@ fn set_field(a: &mut Adjustments, f: Field, band: usize, v: f32) {
         Field::LutStrength => a.lut_strength = v.clamp(0., 1.),
         Field::Opacity => {}
     }
+}
+
+#[cfg(feature = "faces")]
+fn scan_with_optional_faces(
+    photo: &photo_core::Photo,
+    profile: &photo_privacy::Profile,
+    face_model: Option<&Path>,
+) -> Result<ScanReport, String> {
+    let face_regions = if let Some(mp) = face_model {
+        let det = photo_privacy::faces::FaceDetector::load(mp).map_err(|e| format!("{e:#}"))?;
+        let boxes = det
+            .detect(&photo.pixels, 0.7, 0.35)
+            .map_err(|e| format!("{e:#}"))?;
+        Some(boxes)
+    } else {
+        None
+    };
+    Ok(photo_privacy::scan_with_faces(
+        photo_privacy::ScanInput {
+            bytes: &photo.bytes,
+            pixels: &photo.pixels,
+            ocr_text: None,
+            extra_text: vec![],
+        },
+        profile,
+        face_regions.as_deref(),
+    ))
+}
+
+#[cfg(not(feature = "faces"))]
+fn scan_with_optional_faces(
+    photo: &photo_core::Photo,
+    profile: &photo_privacy::Profile,
+    _face_model: Option<&Path>,
+) -> Result<ScanReport, String> {
+    Ok(photo_pipeline::scan_photo(photo, profile))
 }
 
 /// Background media inspection: bounded read, content detection, structure, audio analysis.
@@ -1104,6 +1145,7 @@ impl App {
             seg_end: String::new(),
             player: None,
             playing: None,
+            face_model_path: None,
         };
         app.refresh_library();
         app
@@ -1326,6 +1368,10 @@ impl App {
                 format: self.format.extension().into(),
                 quality: self.quality,
                 mode: self.mode.to_string(),
+                face_model_path: self
+                    .face_model_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
             },
             ..Default::default()
         }
@@ -2140,6 +2186,7 @@ impl App {
                     .collect();
                 return Task::batch(jobs.into_iter().map(|(k, path, edits, generation)| {
                     let profile = profile.clone();
+                    let face_model = self.face_model_path.clone();
                     Task::perform(
                         async move {
                             tokio::task::spawn_blocking(
@@ -2150,10 +2197,12 @@ impl App {
                                     let pixels =
                                         edits.render(&p.pixels).map_err(|e| format!("{e:#}"))?;
                                     let dims = (pixels.width(), pixels.height());
-                                    let r = photo_pipeline::scan_photo(
-                                        &p.with_pixels(pixels),
+                                    let photo = p.with_pixels(pixels);
+                                    let r = scan_with_optional_faces(
+                                        &photo,
                                         &profile,
-                                    );
+                                        face_model.as_deref(),
+                                    )?;
                                     photo_log::event(
                                         Level::Info,
                                         Component::Privacy,
@@ -2752,6 +2801,79 @@ impl App {
                 }
                 self.playing = None;
             }
+            Message::ChooseFaceModel => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("ONNX model", &["onnx"])
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::FaceModelChosen,
+                );
+            }
+            Message::FaceModelChosen(Some(p)) => {
+                self.face_model_path = Some(p);
+                self.dirty_project = true;
+            }
+            Message::FaceModelChosen(None) => {}
+            Message::SelectFace(r) => {
+                self.tool = Tool::Rect;
+                self.selection = Some(Selection::Rect(photo_edit::Rect {
+                    x: r.x,
+                    y: r.y,
+                    width: r.width,
+                    height: r.height,
+                }));
+            }
+            Message::SelectAllFaces => {
+                let Some(i) = self.selected else {
+                    return Task::none();
+                };
+                let faces: Vec<photo_privacy::Finding> = {
+                    let Some(s) = self.entries[i].scan.as_mut() else {
+                        return Task::none();
+                    };
+                    for (f, d) in s.report.findings.iter().zip(&mut s.dismissed) {
+                        if f.category == photo_privacy::Category::Face && f.region.is_some() {
+                            *d = false;
+                        }
+                    }
+                    s.report
+                        .findings
+                        .iter()
+                        .filter(|f| {
+                            f.category == photo_privacy::Category::Face && f.region.is_some()
+                        })
+                        .cloned()
+                        .collect()
+                };
+                if faces.len() == 1
+                    && let Some(r) = faces[0].region
+                {
+                    self.tool = Tool::Rect;
+                    self.selection = Some(Selection::Rect(photo_edit::Rect {
+                        x: r.x,
+                        y: r.y,
+                        width: r.width,
+                        height: r.height,
+                    }));
+                } else if !faces.is_empty() {
+                    let pref = match self.method {
+                        Method::White => photo_privacy::profiles::RedactionPreference::OpaqueWhite,
+                        Method::Blur => photo_privacy::profiles::RedactionPreference::Blur,
+                        Method::Pixelate | Method::Mosaic => {
+                            photo_privacy::profiles::RedactionPreference::Pixelate
+                        }
+                        Method::Black => photo_privacy::profiles::RedactionPreference::OpaqueBlack,
+                    };
+                    if let Some(op) = photo_pipeline::conceal_findings(&faces, pref, 4) {
+                        self.note(format!("Applied redaction to {} face(s).", faces.len()));
+                        return self.update(Message::Apply(op));
+                    }
+                }
+            }
             Message::PaneResized(e) => self.panes.resize(e.split, e.ratio),
             Message::PaneDragged(pane_grid::DragEvent::Dropped { pane, target }) => {
                 self.panes.drop(pane, target)
@@ -2804,6 +2926,7 @@ impl App {
         self.selected = None;
         self.profile = p.settings.profile.clone();
         self.quality = p.settings.quality;
+        self.face_model_path = p.settings.face_model_path.as_ref().map(PathBuf::from);
         self.pending_restore = Some(p);
         if missing > 0 {
             photo_log::warn(

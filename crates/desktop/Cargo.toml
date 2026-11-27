@@ -26,3 +26,7 @@ rodio = { version = "0.19", default-features = false }
 sysinfo = { version = "0.40", default-features = false, features = ["system", "disk"] }
 serde.workspace = true
 serde_json.workspace = true
+
+[features]
+default = []
+faces = ["photo-privacy/faces"]

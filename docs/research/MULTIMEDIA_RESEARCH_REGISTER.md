@@ -84,6 +84,8 @@ Read from each project's official page, repository, model card or paper by the G
 | MediaInfoLib | BSD-2-Clause | - | C++ |
 | avio | MIT OR Apache-2.0 | - | wraps FFmpeg (LGPL/GPL inherited) |
 | Symphonia AIFF | MPL-2.0 | - | `aiff` feature since 0.5.4: **now enabled** |
+| **UltraFace RFB-320** (`Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB`) | **MIT** (GitHub repo, code & `.onnx` weights) | Lightweight `1x3x240x320` face detector | **Yes** (behind `faces` feature via `tract-onnx` 0.23.10, `MIT OR Apache-2.0`) | User supplies local `.onnx` (+ optional schema-2 `manifest.json`). Precision/recall unverified without local weights |
+| **YuNet** (`opencv/opencv_zoo` `face_detection_yunet`) | **Apache-2.0** (OpenCV Zoo) / **MIT** (`libfacedetection.train`) | Dynamic-shape ONNX face detector | No | Candidate alternative; UltraFace RFB-320 selected for fixed `1x3x240x320` `tract-onnx` compatibility |
 
 Consequence: voice-cloning protection and spoken-content detection are no longer blocked by licensing. They are blocked by implementation and validation work: porting ECAPA-TDNN (or GE2E) and Whisper to candle, converting weights, and measuring against real cloning systems with a De-AntiFake purification test. Antigravity's raw notes are not committed.
 

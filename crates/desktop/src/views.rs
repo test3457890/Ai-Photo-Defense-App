@@ -1665,7 +1665,7 @@ fn privacy_panel(app: &App) -> El<'_> {
             .into();
     };
     let finding = |k: usize, f: &photo_privacy::Finding, d: bool| -> El {
-        row![
+        let mut r = row![
             button(column![
                 small(format!("{:?}", f.category)),
                 small(f.description.clone())
@@ -1678,12 +1678,19 @@ fn privacy_panel(app: &App) -> El<'_> {
                 theme::flat
             })
             .on_press(Message::FocusFinding(k)),
+        ]
+        .spacing(2)
+        .align_y(Alignment::Center);
+        if f.category == photo_privacy::Category::Face
+            && let Some(reg) = f.region
+        {
+            r = r.push(btn("Select", Some(Message::SelectFace(reg))));
+        }
+        r.push(
             checkbox("", d)
                 .on_toggle(move |v| Message::Dismiss(k, v))
                 .size(13),
-        ]
-        .spacing(2)
-        .align_y(Alignment::Center)
+        )
         .into()
     };
     let (mut certain, mut uncertain) = (Column::new().spacing(1), Column::new().spacing(1));
@@ -1702,12 +1709,21 @@ fn privacy_panel(app: &App) -> El<'_> {
         .push(certain)
         .push(small(format!("UNCERTAIN ({nu})")))
         .push(uncertain);
+    let has_faces = s
+        .report
+        .findings
+        .iter()
+        .any(|f| f.category == photo_privacy::Category::Face && f.region.is_some());
     c = c.push(
         row![
             pick_list(Method::ALL, Some(app.method), Message::Method)
                 .text_size(FONT)
                 .padding([2, 6]),
-            btn("Conceal located", Some(Message::ConcealFindings))
+            btn("Conceal located", Some(Message::ConcealFindings)),
+            btn(
+                "Select all faces",
+                has_faces.then_some(Message::SelectAllFaces)
+            ),
         ]
         .spacing(4),
     );
@@ -1829,7 +1845,7 @@ fn technical(app: &App) -> El<'_> {
         TechPage::Validation => validation(app),
         TechPage::Forensics => forensics(app),
         TechPage::Lab => lab(app),
-        TechPage::Models => models(),
+        TechPage::Models => models(app),
         TechPage::History => history(app),
         TechPage::Formats => formats(app),
     };
@@ -2526,11 +2542,21 @@ fn media_panel<'a>(app: &'a App, m: &'a MediaEntry, compact: bool) -> El<'a> {
     c.into()
 }
 
-fn models() -> El<'static> {
+fn models(app: &App) -> El<'_> {
+    let face_model = app
+        .face_model_path
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "none".into());
     column![
-        small("Installed models: none."),
+        row![
+            btn("Choose face model (.onnx)", Some(Message::ChooseFaceModel)),
+            small(format!("Face model: {face_model}")),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
         small("Face, person, object, document, segmentation and OCR detectors need licence-reviewed local models (see docs/research/MODEL_LICENSES.md)."),
-        small("Accepted formats: SafeTensors with an independently reviewed manifest (SHA-256, size, code and weight licences). Pickle and executable formats are refused. Verify with: photo-defense verify-model MODEL MANIFEST."),
+        small("Accepted formats: SafeTensors (and ONNX for face detection) with an independently reviewed manifest (SHA-256, size, code and weight licences). Pickle and executable formats are refused. Verify with: photo-defense verify-model MODEL MANIFEST."),
         small("Downloads and updates: not implemented. The application makes no network connections."),
     ]
     .spacing(6)
