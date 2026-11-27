@@ -347,18 +347,6 @@ impl Drop for SessionGuard {
     }
 }
 
-/// Removes orphaned temporary files left by interrupted atomic writes.
-pub fn clean_temp_files(dir: &Path) -> usize {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return 0;
-    };
-    rd.filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().starts_with(".tmp"))
-        .filter(|e| std::fs::symlink_metadata(e.path()).is_ok_and(|m| m.is_file()))
-        .filter(|e| std::fs::remove_file(e.path()).is_ok())
-        .count()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,7 +430,7 @@ mod tests {
         );
     }
     #[test]
-    fn session_lock_detects_unclean_shutdown_and_temp_cleanup() {
+    fn session_lock_detects_unclean_shutdown() {
         let d = tempfile::tempdir().unwrap();
         {
             let g = SessionGuard::acquire(d.path()).unwrap();
@@ -453,7 +441,6 @@ mod tests {
         std::mem::forget(g); // simulate forced termination: Drop never runs
         let g2 = SessionGuard::acquire(d.path()).unwrap();
         assert!(g2.previous_unclean);
-        std::fs::write(d.path().join(".tmpABC123"), b"partial").unwrap();
-        assert_eq!(clean_temp_files(d.path()), 1);
     }
 }
+

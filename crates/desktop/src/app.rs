@@ -801,15 +801,14 @@ fn scan_with_optional_faces(
 }
 
 #[cfg(feature = "c2pa")]
-fn sign_exported_c2pa(
-    saved: &Path,
+fn sign_prepared_c2pa(
+    prepared: &mut photo_pipeline::Prepared,
     edits: &EditStack,
     cert_path: &Path,
     key_path: &Path,
 ) -> anyhow::Result<()> {
     let cert_pem = std::fs::read(cert_path)?;
     let key_pem = std::fs::read(key_path)?;
-    let bytes = std::fs::read(saved)?;
     let mut actions = vec!["c2pa.metadata_removed"];
     if edits
         .active()
@@ -821,14 +820,28 @@ fn sign_exported_c2pa(
     if edits.active().iter().any(|op| op.is_secure_redaction()) {
         actions.push("c2pa.redacted");
     }
-    let signed = photo_privacy::c2pa_cred::sign_bytes(&bytes, &cert_pem, &key_pem, &actions)?;
-    std::fs::write(saved, signed)?;
+    let signed = photo_privacy::c2pa_cred::sign_bytes(&prepared.bytes, &cert_pem, &key_pem, &actions)?;
+    let original_pixels = photo_core::decode_export(&prepared.bytes)?;
+    let signed_pixels = photo_core::decode_export(&signed)?;
+    anyhow::ensure!(
+        original_pixels.to_rgba8() == signed_pixels.to_rgba8(),
+        "C2PA signing changed the exported pixels"
+    );
+    let credentials = photo_privacy::c2pa_cred::inspect_bytes(&signed);
+    anyhow::ensure!(
+        credentials.present && credentials.validation_state != "Invalid",
+        "Signed content credentials could not be validated"
+    );
+    prepared.report.output_hash = photo_core::fingerprint(&signed);
+    prepared.report.pipeline.push("C2PA signed in memory; final pixels and credentials checked before publication".into());
+    prepared.report.limitations.push("User-requested C2PA credentials were added after metadata removal and may identify the signer. Certificate trust is separate from signature integrity.".into());
+    prepared.bytes = signed;
     Ok(())
 }
 
 #[cfg(not(feature = "c2pa"))]
-fn sign_exported_c2pa(
-    _saved: &Path,
+fn sign_prepared_c2pa(
+    _prepared: &mut photo_pipeline::Prepared,
     _edits: &EditStack,
     _cert_path: &Path,
     _key_path: &Path,
@@ -1222,7 +1235,8 @@ impl App {
         let session = photo_project::SessionGuard::acquire(&data_dir).ok();
         let unclean = session.as_ref().is_some_and(|s| s.previous_unclean);
         photo_log::install_panic_hook(session.as_ref().map(|s| s.crash_marker()));
-        photo_project::clean_temp_files(&data_dir);
+        // Do not delete files by a generic temporary-file name: ownership and
+        // whether another session is writing them cannot be established here.
         photo_log::info(
             Component::App,
             Code::Startup,
@@ -2934,7 +2948,7 @@ impl App {
                 if let Some(m) = self.media.get_mut(i) {
                     match r {
                         Ok((p, report, cmp, lufs)) => {
-                            m.status = "Exported, verified".into();
+                            m.status = "Exported; review verification report".into();
                             m.output = Some(p);
                             m.report = Some(report);
                             m.comparison = cmp;
@@ -3442,7 +3456,7 @@ impl App {
                             } else {
                                 vec![]
                             };
-                            let prepared = photo_pipeline::prepare(&p, &edits, f, q, &profile)?;
+                            let mut prepared = photo_pipeline::prepare(&p, &edits, f, q, &profile)?;
                             let v = &prepared.report.verification;
                             if (!v.passed || !risks.is_empty()) && !accept {
                                 let mut w = risks;
@@ -3463,10 +3477,10 @@ impl App {
                                 .emit();
                                 return Ok(ExportState::Blocked(w));
                             }
-                            let saved = photo_pipeline::publish(&prepared, &path, &dir, f, accept)?;
                             if let Some((cert_p, key_p)) = &c2pa_creds {
-                                sign_exported_c2pa(&saved.image, &edits, cert_p, key_p)?;
+                                sign_prepared_c2pa(&mut prepared, &edits, cert_p, key_p)?;
                             }
+                            let saved = photo_pipeline::publish(&prepared, &path, &dir, f, accept)?;
                             photo_log::event(
                                 Level::Info,
                                 Component::Export,
@@ -3743,3 +3757,4 @@ pub fn run() -> iced::Result {
             )
         })
 }
+

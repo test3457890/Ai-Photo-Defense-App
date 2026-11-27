@@ -23,6 +23,26 @@ pub struct RedactRect {
     pub blur: bool,
 }
 
+impl RedactRect {
+    pub(crate) fn validate(&self, width: u32, height: u32) -> Result<()> {
+        ensure!(
+            self.from_s.is_finite()
+                && self.to_s.is_finite()
+                && self.from_s >= 0.0
+                && self.to_s >= self.from_s,
+            "Redaction times must be finite, non-negative and ordered"
+        );
+        ensure!(
+            self.width > 0
+                && self.height > 0
+                && self.x.checked_add(self.width).is_some_and(|x| x <= width)
+                && self.y.checked_add(self.height).is_some_and(|y| y <= height),
+            "Redaction rectangle must be non-empty and inside the video frame"
+        );
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PreviewFrame {
     pub width: u32,
@@ -51,6 +71,8 @@ pub struct VideoRedactReport {
     pub av_sync_diff_s: f64,
     pub verified: bool,
     pub metadata_removed: bool,
+    pub visual_only_concealment: bool,
+    pub limitations: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -847,6 +869,7 @@ fn build_audio_trak(audio: &AudioTrackData, mvhd_timescale: u32, offsets: &[u32]
 /// Decodes an H.264 MP4/MOV frame-by-frame, burns redactions, re-encodes with `craft-video`,
 /// copies original audio samples unchanged into a metadata-free MP4, and verifies the output.
 pub fn redact_mp4(input: &Path, output: &Path, rects: &[RedactRect]) -> Result<VideoRedactReport> {
+    ensure!(!rects.is_empty(), "At least one redaction rectangle is required");
     ensure!(
         output
             .extension()
@@ -854,6 +877,9 @@ pub fn redact_mp4(input: &Path, output: &Path, rects: &[RedactRect]) -> Result<V
         "Output must be .mp4 or .mov"
     );
     let d = demux_mp4(input)?;
+    for rect in rects {
+        rect.validate(d.width, d.height)?;
+    }
     // The source's own audio-minus-video duration; sync is judged as drift from this, because
     // real recordings often have tracks of slightly different lengths.
     let src_video_s = d.video_duration_ticks as f64 / f64::from(d.video_timescale.max(1));
@@ -1077,8 +1103,13 @@ pub fn redact_mp4(input: &Path, output: &Path, rects: &[RedactRect]) -> Result<V
         duration_s,
         audio_samples,
         av_sync_diff_s,
-        verified: frame_verify.passed,
+        verified: frame_verify.passed && !rects.iter().any(|r| r.blur),
         metadata_removed: frame_verify.metadata_clean,
+        visual_only_concealment: rects.iter().any(|r| r.blur),
+        limitations: vec![
+            "Verification checks only the requested regions, not whether every sensitive object was selected. Review every frame.".into(),
+            "Blur is visual concealment, not irreversible privacy redaction. Original audio is copied unchanged and may contain private speech.".into(),
+        ],
     })
 }
 
@@ -1089,12 +1120,31 @@ pub(crate) struct LumaFrame {
     pub y: Vec<u8>,
 }
 
+const MAX_LUMA_BYTES: u64 = 512 * 1024 * 1024;
+
+fn check_luma_budget(width: u32, height: u32, frames: usize) -> Result<()> {
+    let bytes = u64::from(width)
+        .checked_mul(u64::from(height))
+        .and_then(|n| n.checked_mul(frames as u64));
+    ensure!(
+        width > 0 && height > 0 && bytes.is_some_and(|n| n <= MAX_LUMA_BYTES),
+        "Decoded video exceeds the 512 MiB tracking/verification budget; use a shorter or smaller clip"
+    );
+    Ok(())
+}
+
 pub(crate) fn decode_all_luma(path: &Path) -> Result<Vec<LumaFrame>> {
     let d = demux_mp4(path)?;
+    check_luma_budget(d.width, d.height, d.video_samples.len())?;
     let mut dec = Decoder::new();
     let mut annexb = Vec::new();
     let mut out = Vec::with_capacity(d.video_samples.len());
-    let mut push_pic = |pic: Picture| {
+    let mut push_pic = |pic: Picture| -> Result<()> {
+        ensure!(
+            pic.width == d.width && pic.height == d.height,
+            "Decoded frame dimensions differ from the video sample entry"
+        );
+        check_luma_budget(d.width, d.height, out.len() + 1)?;
         let mut y = Vec::with_capacity((d.width * d.height) as usize);
         for row in 0..d.height as usize {
             let start = row * pic.y_stride;
@@ -1106,6 +1156,7 @@ pub(crate) fn decode_all_luma(path: &Path) -> Result<Vec<LumaFrame>> {
             height: d.height,
             y,
         });
+        Ok(())
     };
     for (idx, s) in d.video_samples.iter().enumerate() {
         annexb.clear();
@@ -1118,11 +1169,11 @@ pub(crate) fn decode_all_luma(path: &Path) -> Result<Vec<LumaFrame>> {
             &mut annexb,
         )?;
         for pic in dec.decode(&annexb, s.pts_ticks as i64)? {
-            push_pic(pic);
+            push_pic(pic)?;
         }
     }
     for pic in dec.flush() {
-        push_pic(pic);
+        push_pic(pic)?;
     }
     Ok(out)
 }
@@ -1300,6 +1351,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn decoded_frame_budget_rejects_large_and_overflowing_inputs() {
+        assert!(check_luma_budget(320, 180, 1801).is_ok());
+        assert!(check_luma_budget(1920, 1080, 1800).is_err());
+        assert!(check_luma_budget(u32::MAX, u32::MAX, usize::MAX).is_err());
+        assert!(check_luma_budget(0, 64, 1).is_err());
+    }
+
+    #[test]
+    fn invalid_or_unchecked_regions_never_publish_or_modify_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("in.mp4");
+        let dst = dir.path().join("out.mp4");
+        write_synthetic_h264_mp4(&src, 64, 64, 10, &[(220, 220, 220); 4]).unwrap();
+        let original = std::fs::read(&src).unwrap();
+        let valid = RedactRect {
+            x: 16, y: 16, width: 32, height: 32,
+            from_s: 0.0, to_s: 0.3, blur: false,
+        };
+        for rect in [
+            RedactRect { x: 100, ..valid },
+            RedactRect { width: 0, ..valid },
+            RedactRect { width: u32::MAX, ..valid },
+            RedactRect { from_s: f64::NAN, ..valid },
+            RedactRect { to_s: f64::INFINITY, ..valid },
+            RedactRect { from_s: 10.0, to_s: 11.0, ..valid },
+        ] {
+            assert!(redact_mp4(&src, &dst, &[rect]).is_err());
+            assert!(!dst.exists());
+            assert_eq!(std::fs::read(&src).unwrap(), original);
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        }
+        std::fs::write(&dst, b"existing output").unwrap();
+        assert!(redact_mp4(&src, &dst, &[valid]).is_err());
+        assert_eq!(std::fs::read(&dst).unwrap(), b"existing output");
+    }
+
+    #[test]
     fn encode_redact_decode_and_verify_region() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("in.mp4");
@@ -1346,3 +1434,4 @@ mod tests {
         );
     }
 }
+

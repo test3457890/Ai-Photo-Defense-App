@@ -3,8 +3,9 @@
 //! never stores pixels. GPS coordinates are not copied into the catalog.
 //!
 //! The thumbnail cache is OFF by default because cached previews can reveal sensitive content.
-//! When enabled it lives in a user-chosen directory and `clear` overwrites files before deleting
-//! them (best effort: SSD wear levelling and file-system snapshots can retain old blocks).
+//! When enabled it uses namespaced files in a user-chosen directory. Clearing unlinks only
+//! those entries; it never overwrites data, which could also belong to another hard link.
+//! Deletion does not guarantee erasure from SSDs, snapshots, backups or other links.
 use anyhow::{Context, Result, ensure};
 use photo_log::{Code, Component};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -302,9 +303,10 @@ impl ThumbCache {
     }
     fn file(&self, hash: &str) -> Option<PathBuf> {
         let d = self.dir.as_ref()?;
-        hash.chars()
+        (!hash.is_empty() && hash.len() <= 64 && hash.chars()
             .all(|c| c.is_ascii_hexdigit())
-            .then(|| d.join(format!("{}.png", &hash[..hash.len().min(64)])))
+        )
+            .then(|| d.join(format!("apd-thumb-{hash}.png")))
     }
     pub fn get_or_make(
         &self,
@@ -335,26 +337,24 @@ impl ThumbCache {
             })
             .unwrap_or(0)
     }
-    /// Overwrites each cached file with zeros, syncs, then deletes it.
+    /// Unlinks only namespaced cache entries. Never overwrites shared hard-link contents.
     pub fn clear(&self) -> Result<usize> {
         let Some(d) = &self.dir else { return Ok(0) };
         let mut n = 0;
         for e in std::fs::read_dir(d)?.filter_map(|e| e.ok()) {
             let p = e.path();
             let m = std::fs::symlink_metadata(&p)?;
-            if !m.is_file() || p.extension().is_none_or(|x| x != "png") {
+            let owned_name = p.file_name().and_then(|s| s.to_str()).is_some_and(|s| {
+                s.strip_prefix("apd-thumb-")
+                    .and_then(|s| s.strip_suffix(".png"))
+                    .is_some_and(|hash| {
+                        !hash.is_empty()
+                            && hash.len() <= 64
+                            && hash.chars().all(|c| c.is_ascii_hexdigit())
+                    })
+            });
+            if !m.is_file() || !owned_name {
                 continue;
-            }
-            if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(&p) {
-                use std::io::Write;
-                let zeros = vec![0u8; 64 * 1024];
-                let mut left = m.len();
-                while left > 0 {
-                    let k = left.min(zeros.len() as u64) as usize;
-                    f.write_all(&zeros[..k])?;
-                    left -= k as u64;
-                }
-                f.sync_all()?;
             }
             std::fs::remove_file(&p)?;
             n += 1;
@@ -462,7 +462,7 @@ mod tests {
         assert_eq!(c.albums().unwrap(), vec![(alb, "Summer".into(), 1)]);
     }
     #[test]
-    fn thumbnail_cache_off_by_default_and_secure_clear() {
+    fn thumbnail_cache_off_by_default_and_clear() {
         assert!(!ThumbCache::disabled().is_enabled());
         let d = tempfile::tempdir().unwrap();
         let cache = ThumbCache::enabled(d.path().join("thumbs")).unwrap();
@@ -487,4 +487,20 @@ mod tests {
         assert_eq!(cache.clear().unwrap(), 1);
         assert_eq!(cache.size_bytes(), 0);
     }
+
+    #[test]
+    fn cache_clear_preserves_unrelated_images_and_hard_link_contents() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache_dir = dir.path().join("cache");
+        let cache = ThumbCache::enabled(cache_dir.clone()).unwrap();
+        let original = dir.path().join("original.png");
+        std::fs::write(&original, b"original pixels").unwrap();
+        let unrelated = cache_dir.join("family.png");
+        std::fs::write(&unrelated, b"unrelated image").unwrap();
+        std::fs::hard_link(&original, cache_dir.join("apd-thumb-abcdef.png")).unwrap();
+        assert_eq!(cache.clear().unwrap(), 1);
+        assert_eq!(std::fs::read(&original).unwrap(), b"original pixels");
+        assert_eq!(std::fs::read(&unrelated).unwrap(), b"unrelated image");
+    }
 }
+

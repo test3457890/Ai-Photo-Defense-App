@@ -56,12 +56,6 @@ pub struct ApprovedAiModel {
 
 pub const APPROVED_MODELS: &[ApprovedAiModel] = &[
     ApprovedAiModel {
-        id: "qwen2.5:3b",
-        source: "Ollama / Qwen/Qwen2.5-3B-Instruct",
-        license: "Apache-2.0",
-        min_ram_mib: 4096,
-    },
-    ApprovedAiModel {
         id: "phi3.5:mini",
         source: "Ollama / microsoft/Phi-3.5-mini-instruct",
         license: "MIT",
@@ -153,7 +147,7 @@ impl Default for OllamaConfig {
         Self {
             enabled: false,
             endpoint: "127.0.0.1:11434".into(),
-            model: "qwen2.5:3b".into(),
+            model: "phi3.5:mini".into(),
         }
     }
 }
@@ -237,7 +231,7 @@ mod tests {
         let remote = OllamaConfig {
             enabled: true,
             endpoint: "8.8.8.8:11434".into(),
-            model: "qwen2.5:3b".into(),
+            model: "phi3.5:mini".into(),
         };
         let err = ask_ollama_local(&remote, "hello").unwrap_err().to_string();
         assert!(err.contains("non-loopback"));
@@ -252,7 +246,8 @@ mod tests {
 
     #[test]
     fn approved_model_registry_and_local_sha256_gate() {
-        assert!(find_approved_model("qwen2.5:3b").is_some());
+        assert!(find_approved_model("phi3.5:mini").is_some());
+        assert!(find_approved_model("qwen2.5:3b").is_none());
         let dir = tempfile::tempdir().unwrap();
         let bad = dir.path().join("weights.bin");
         std::fs::write(&bad, b"pickle").unwrap();
@@ -278,3 +273,4 @@ mod tests {
         assert!(hw.total_ram_mib > 0);
     }
 }
+
