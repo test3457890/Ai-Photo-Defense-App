@@ -3431,6 +3431,14 @@ impl App {
     }
 }
 
+fn load_app_icon() -> Option<window::Icon> {
+    let bytes = include_bytes!("../../../assets/icons/icon-64.png");
+    let (img, _) = photo_core::decode_bounded(bytes).ok()?;
+    let rgba = img.into_rgba8();
+    let (w, h) = rgba.dimensions();
+    window::icon::from_rgba(rgba.into_raw(), w, h).ok()
+}
+
 pub fn run() -> iced::Result {
     let mut args = std::env::args_os().skip(1);
     let mut paths = vec![];
@@ -3465,6 +3473,7 @@ pub fn run() -> iced::Result {
         .window(window::Settings {
             size: iced::Size::new(1280., 760.),
             min_size: Some(iced::Size::new(900., 560.)),
+            icon: load_app_icon(),
             exit_on_close_request: false,
             ..Default::default()
         })
