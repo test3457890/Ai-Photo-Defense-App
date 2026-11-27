@@ -79,37 +79,39 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config xvfb fonts-dejavu-core imagemagick x11-apps
-      - name: Build desktop application
-        run: cargo build --locked -p photo-desktop
+      - name: Build desktop application (release, as shipped)
+        run: cargo build --locked --release -p photo-desktop
       - name: Launch desktop app and capture screenshot (Linux)
         if: runner.os == 'Linux'
         run: |
           mkdir -p /tmp/apd-smoke gui-smoke-artifacts
           xvfb-run -a -s "-screen 0 1280x800x24" bash -c '
             export APD_DATA_DIR=/tmp/apd-smoke
-            ./target/debug/photo-desktop &
+            ./target/release/photo-desktop > gui-smoke-artifacts/stdout.txt 2> gui-smoke-artifacts/stderr.txt &
             APP_PID=$!
-            sleep 5
-            kill -0 "$APP_PID"
+            sleep 15
+            if ! kill -0 "$APP_PID"; then echo "App exited early"; cat gui-smoke-artifacts/stderr.txt; exit 1; fi
             import -window root gui-smoke-artifacts/gui-smoke-linux.png || xwd -root -out gui-smoke-artifacts/gui-smoke-linux.xwd
             kill "$APP_PID" || true
             wait "$APP_PID" || true
           '
+          cat gui-smoke-artifacts/stderr.txt || true
       - name: Launch desktop app and capture screenshot (macOS)
         if: runner.os == 'macOS'
         run: |
           mkdir -p /tmp/apd-smoke gui-smoke-artifacts
           export APD_DATA_DIR=/tmp/apd-smoke
-          ./target/debug/photo-desktop &
+          ./target/release/photo-desktop > gui-smoke-artifacts/stdout.txt 2> gui-smoke-artifacts/stderr.txt &
           APP_PID=$!
-          sleep 5
-          kill -0 "$APP_PID"
+          sleep 15
+          if ! kill -0 "$APP_PID"; then echo "App exited early"; cat gui-smoke-artifacts/stderr.txt; exit 1; fi
           screencapture -x gui-smoke-artifacts/gui-smoke-macos.png || echo "screencapture unavailable on runner"
           kill "$APP_PID" || true
           wait "$APP_PID" || true
+          cat gui-smoke-artifacts/stderr.txt || true
       - name: Verify startup log has no errors
         run: |
-          ls -la /tmp/apd-smoke/logs
+          ls -la /tmp/apd-smoke /tmp/apd-smoke/logs || { cat gui-smoke-artifacts/stderr.txt; exit 1; }
           cp -r /tmp/apd-smoke/logs gui-smoke-artifacts/logs
           grep -rq "started" /tmp/apd-smoke/logs
           if grep -rqE '"level":"Error"|\bERROR\b' /tmp/apd-smoke/logs; then
@@ -118,6 +120,7 @@ jobs:
             exit 1
           fi
       - name: Upload GUI smoke screenshots and logs
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gui-smoke-${{ matrix.os }}

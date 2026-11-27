@@ -455,7 +455,6 @@ fn essential(app: &App) -> El<'_> {
             .on_toggle(Message::AutoRedact)
             .size(14)
             .text_size(FONT),
-        horizontal_space(),
         pick_list(
             photo_core::ExportFormat::ALL,
             Some(app.format),
@@ -485,7 +484,9 @@ fn essential(app: &App) -> El<'_> {
             ),
     ]
     .spacing(6)
-    .align_y(Alignment::Center);
+    .align_y(Alignment::Center)
+    // Wraps in narrow windows instead of squeezing controls.
+    .wrap();
     let header = row![
         small("").width(18),
         small("File").width(Length::FillPortion(4)),
@@ -841,8 +842,11 @@ fn library(app: &App) -> El<'_> {
 }
 
 fn tool_bar(app: &App) -> El<'_> {
-    let tools = Tool::ALL.iter().fold(row![].spacing(2), |r, tl| {
-        r.push(
+    // One flat row that wraps onto further lines in narrow windows instead of squeezing buttons to
+    // zero width (which also tripped a debug assertion in the tiny-skia renderer).
+    let mut items: Vec<El> = Tool::ALL
+        .iter()
+        .map(|tl| {
             button(text(tl.label()).size(FONT_SMALL))
                 .padding([3, 7])
                 .style(if app.tool == *tl {
@@ -850,37 +854,25 @@ fn tool_bar(app: &App) -> El<'_> {
                 } else {
                     theme::tool
                 })
-                .on_press(Message::Tool(*tl)),
-        )
-    });
-    let views = row![
-        toggle(
-            "Edited",
-            app.view == ViewMode::Edited,
-            Message::View(ViewMode::Edited)
-        ),
-        toggle(
-            "Before",
-            app.view == ViewMode::Before,
-            Message::View(ViewMode::Before)
-        ),
-        toggle(
-            "Split",
-            app.view == ViewMode::Split,
-            Message::View(ViewMode::Split)
-        ),
-    ]
-    .spacing(2);
-    let main = row![
-        tools,
-        sep(),
-        views,
-        sep(),
-        toggle("Clip", app.clipping, Message::Clipping),
-        toggle("Thirds", app.thirds, Message::Thirds)
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center);
+                .on_press(Message::Tool(*tl))
+                .into()
+        })
+        .collect();
+    items.push(sep());
+    for (label, mode) in [
+        ("Edited", ViewMode::Edited),
+        ("Before", ViewMode::Before),
+        ("Split", ViewMode::Split),
+    ] {
+        items.push(toggle(label, app.view == mode, Message::View(mode)).into());
+    }
+    items.push(sep());
+    items.push(toggle("Clip", app.clipping, Message::Clipping).into());
+    items.push(toggle("Thirds", app.thirds, Message::Thirds).into());
+    let main = iced::widget::Row::with_children(items)
+        .spacing(3)
+        .align_y(Alignment::Center)
+        .wrap();
     let mut col = column![main].spacing(4);
     if app.selection.is_some() || !app.points.is_empty() || app.gradient.is_some() {
         let mut r = row![small(match app.tool {
@@ -1899,7 +1891,6 @@ fn diagnostics(app: &App) -> El<'_> {
                 .style(theme::input)
         )
         .width(260),
-        horizontal_space(),
         btn("Copy report", Some(Message::CopyReport)),
         toggle(
             "Preview report",
@@ -1913,7 +1904,9 @@ fn diagnostics(app: &App) -> El<'_> {
             .on_press(Message::ClearLogs),
     ]
     .spacing(6)
-    .align_y(Alignment::Center);
+    .align_y(Alignment::Center)
+    // Wraps in narrow windows instead of squeezing controls.
+    .wrap();
     let header = row![
         small("Time (UTC ms)").width(120),
         small("Level").width(70),
