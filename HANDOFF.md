@@ -1,5 +1,108 @@
 # AI Photo Defense development handoff
 
+## Part 5 Expanded & Antigravity Handoff (2026-11-26, Antigravity)
+
+> **Important honesty note:** This application is **not** production-ready. No AI protection effectiveness claim, deepfake resistance claim, or voice-assistant suppression claim is made without independent real-model and real-media measurements.
+
+### 1. Current branches and commits
+
+Base branch: `origin/main` at `8824d41` (`Merge pull request #11 from test3457890/antigravity/whisper-stt`).
+
+| Branch | Tip Commit | Status | Scope |
+|---|---|---|---|
+| `main` | `8824d41` | Merged (PR #11) | Parts 1–5 + optional Whisper `stt` feature (`antigravity/whisper-stt`) |
+| `ag/voice-protect` | `29ab1a8` | Pushed, awaiting Claude review | Optional `voice-protect` feature: ECAPA-TDNN in `candle`, `tools/convert_ecapa.py`, CLI `audio-protect`, Desktop UI |
+| `ag/video-frames` | `9e7737d` | Pushed, awaiting Claude review | Optional `video` feature: pure-Rust H.264 MP4/MOV decode, preview/scrub, box-blur/blackout redaction, clean re-encode, CLI `video-redact`, Desktop UI |
+| `ag/opus-wma` | `5f34c84` | Pushed, awaiting Claude review | Optional `opus` feature (`filmcraft-opus` 0.9.0); WMA researched and documented unsupported |
+| `ag/face-detect` | `f271b37` | Pushed, awaiting Claude review | Optional `faces` feature (`tract-onnx` 0.23.10 + UltraFace RFB-320 MIT), schema-2 ONNX verification, Desktop `"Select all faces"` |
+| `ag/c2pa` | `ded84a5` | Pushed, awaiting Claude review | Optional `c2pa` feature (`c2pa` 0.92.3 `rust_native_crypto`), Forensics inspection + export signing with user-provided PEM chain/key |
+| `ag/installers` | `d4bad1d` | Pushed, awaiting Claude review | `.github/workflows/release.yml` (unsigned Windows MSI, Linux `.deb` + AppImage, macOS `.dmg`, `SHA256SUMS.txt`, CycloneDX SBOM; no releases published) |
+| `ag/gui-smoke` | `88f2e01` | Pushed, awaiting Claude review | `gui-smoke` job in `.github/workflows/ci.yml` (Linux `xvfb-run` + screenshot, macOS launch + `screencapture`, `APD_DATA_DIR/logs` `"started"` & no `ERROR` check) |
+| `ag/handoff-part5` | (this branch) | Pushed, awaiting Claude review | Updated `HANDOFF.md` with full Part 5 Expanded coordination state |
+
+### 2. Completed assignments
+
+- **Assignment 1 (Research):** Verified code + weights licences across 25+ projects (`MULTIMEDIA_RESEARCH_REGISTER.md` on `main`).
+- **Assignment 2 (`antigravity/whisper-stt`, merged at `8824d41`):** Optional `stt` feature (`candle` Whisper), `audio-transcribe` CLI, PII timestamp bleep ranges.
+- **Assignment 3 (`ag/voice-protect`):** Pure-Rust `candle-core`/`candle-nn` ECAPA-TDNN + differentiable 80-bin Slaney Fbank (`crates/media/src/ecapa.rs`), `tools/convert_ecapa.py`, CLI `audio-protect`, Desktop UI.
+- **Assignment 4 (`ag/video-frames`):** Pure-Rust H.264 MP4/MOV decode/preview/redact/re-encode (`crates/media/src/video.rs`), CLI `video-redact`, Desktop scrub/play/redact UI.
+- **Assignment 5 (`ag/opus-wma`):** Pure-Rust Opus decode (`crates/media/src/audio.rs`) via `filmcraft-opus`; WMA documented unsupported (`oxideav-wma` 0.0.5 incomplete, no ASF demuxer).
+- **Assignment 6 (`ag/face-detect`):** Pure-Rust ONNX face detection (`crates/privacy/src/faces.rs`), `verify_onnx` (`crates/models/src/lib.rs`), `"Select all faces"` in Desktop.
+- **Assignment 7 (`ag/c2pa`):** C2PA manifest inspection and ES256 export signing (`crates/privacy/src/c2pa_cred.rs`, `forensics.rs`, Desktop export settings).
+- **Assignment 8 (`ag/installers`):** Unsigned CI installer packaging workflow (`.github/workflows/release.yml`, `packaging/wix/main.wxs`, `packaging/linux/ai-photo-defense.desktop`, `packaging/macos/Info.plist`, `crates/desktop/Cargo.toml` `[package.metadata.deb]`, `docs/INSTALLATION.md`).
+- **Assignment 9 (`ag/gui-smoke`):** Linux/macOS `gui-smoke` job in `.github/workflows/ci.yml`.
+
+### 3. Modified files by branch
+
+- `ag/voice-protect`: `CHANGELOG.md`, `Cargo.lock`, `crates/cli/Cargo.toml`, `crates/cli/src/main.rs`, `crates/desktop/Cargo.toml`, `crates/desktop/src/app.rs`, `crates/desktop/src/views.rs`, `crates/media/Cargo.toml`, `crates/media/src/ecapa.rs`, `crates/media/src/lib.rs`, `crates/project/src/lib.rs`, `docs/research/MULTIMEDIA_RESEARCH_REGISTER.md`, `tools/convert_ecapa.py`.
+- `ag/video-frames`: `CHANGELOG.md`, `Cargo.lock`, `crates/cli/Cargo.toml`, `crates/cli/src/main.rs`, `crates/desktop/Cargo.toml`, `crates/desktop/src/app.rs`, `crates/desktop/src/views.rs`, `crates/media/Cargo.toml`, `crates/media/src/lib.rs`, `crates/media/src/mp4.rs`, `crates/media/src/video.rs`, `docs/research/MULTIMEDIA_RESEARCH_REGISTER.md`.
+- `ag/opus-wma`: `CHANGELOG.md`, `Cargo.lock`, `crates/cli/Cargo.toml`, `crates/media/Cargo.toml`, `crates/media/src/audio.rs`, `docs/FORMAT_COMPATIBILITY.md`, `docs/research/MULTIMEDIA_RESEARCH_REGISTER.md`.
+- `ag/face-detect`: `CHANGELOG.md`, `Cargo.lock`, `crates/cli/Cargo.toml`, `crates/desktop/Cargo.toml`, `crates/desktop/src/app.rs`, `crates/desktop/src/views.rs`, `crates/models/src/lib.rs`, `crates/privacy/Cargo.toml`, `crates/privacy/src/faces.rs`, `crates/privacy/src/lib.rs`, `crates/project/src/lib.rs`, `docs/research/MULTIMEDIA_RESEARCH_REGISTER.md`.
+- `ag/c2pa`: `CHANGELOG.md`, `Cargo.lock`, `crates/cli/Cargo.toml`, `crates/desktop/Cargo.toml`, `crates/desktop/src/app.rs`, `crates/desktop/src/views.rs`, `crates/privacy/Cargo.toml`, `crates/privacy/src/c2pa_cred.rs`, `crates/privacy/src/forensics.rs`, `crates/privacy/src/lib.rs`, `crates/project/src/lib.rs`, `deny.toml`, `docs/research/MULTIMEDIA_RESEARCH_REGISTER.md`.
+- `ag/installers`: `.github/workflows/release.yml`, `CHANGELOG.md`, `crates/desktop/Cargo.toml`, `docs/INSTALLATION.md`, `packaging/linux/ai-photo-defense.desktop`, `packaging/macos/Info.plist`, `packaging/wix/main.wxs`.
+- `ag/gui-smoke`: `.github/workflows/ci.yml`, `CHANGELOG.md`.
+
+### 4. Architecture decisions
+
+- **All heavy/native or codec/ML additions are behind OFF-by-default Cargo features** (`stt`, `voice-protect`, `video`, `opus`, `faces`, `c2pa`), preserving the default build and CI matrix.
+- **No runtime network downloads, no pickle/`.bin`/`.pt`/`.pth` weight loading:** models are loaded strictly from user-selected local SafeTensors or `.onnx` paths with schema-2 manifest verification.
+- **Pure-Rust codecs preferred:** `filmcraft-h264`, `filmcraft-h264enc`, `filmcraft-opus` (`MIT OR Apache-2.0`) avoid C/C++ toolchains and LGPL/GPL FFmpeg runtime dependencies (H.264 patent exposure remains documented).
+- **C2PA without OpenSSL:** `c2pa = "0.92"` uses `default-features = false, features = ["rust_native_crypto", "file_io"]`.
+
+### 5. New dependencies and licences
+
+| Crate | Version | Licence | Branch / Feature | Notes |
+|---|---|---|---|---|
+| `filmcraft-h264`, `filmcraft-h264enc`, `filmcraft-bitstream` | `0.9.0` | `MIT OR Apache-2.0` | `ag/video-frames` (`video`) | Pure-Rust H.264; H.264 patents still apply |
+| `filmcraft-opus` | `0.9.0` | `MIT OR Apache-2.0` | `ag/opus-wma` (`opus`) | Pure-Rust RFC 6716 decoder |
+| `effectcraft-opusenc` | `0.9.2` | `MIT OR Apache-2.0` | `ag/opus-wma` (`dev-dependencies`) | Test-only Ogg/Opus fixture generation |
+| `tract-onnx` | `0.23.10` | `MIT OR Apache-2.0` | `ag/face-detect` (`faces`) | Pure-Rust ONNX inference for UltraFace RFB-320 (`MIT`) |
+| `c2pa` | `0.92.3` | `MIT OR Apache-2.0` | `ag/c2pa` (`c2pa`) | Uses `rust_native_crypto` + `file_io` |
+| `rcgen` | `0.14.10` | `MIT OR Apache-2.0` | `ag/c2pa` (`dev-dependencies`) | Ephemeral CA+EE ES256 test cert generation |
+
+### 6. Test results
+
+Every branch (`ag/voice-protect`, `ag/video-frames`, `ag/opus-wma`, `ag/face-detect`, `ag/c2pa`, `ag/installers`, `ag/gui-smoke`) passed on Windows 10 x64 (`CARGO_TARGET_DIR=C:\Users\brett\apd-target-ag`):
+- `cargo fmt --all --check` — passed
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings` — passed (0 warnings)
+- `cargo test --workspace --all-features` — passed (note `#[ignore]` tests requiring external local models: `stt::tests::transcribe_with_local_whisper_model`, `ecapa::tests::parity_with_speechbrain_python_embeddings`, `faces::tests::detects_faces_with_ultraface_model`)
+- `cargo deny --all-features check` — passed
+
+**Not tested locally:**
+- Real SpeechBrain `spkrec-ecapa-voxceleb` weights / Python parity / Resemblyzer transfer / De-AntiFake purification on real speech.
+- Real camera MP4/MOV with AAC audio track in `video-redact`.
+- Real external `.webm` / `.opus` files.
+- Real `version-RFB-320.onnx` accuracy across skin tones and lighting.
+- GitHub Actions execution of `release.yml` (`gh` CLI was not logged in) and `gui-smoke` on Linux/macOS runners.
+
+### 7. Known bugs and security findings
+
+- **`RUSTSEC-2023-0071` (Marvin Attack on `rsa 0.9.10`):** Pulled in transitively by `c2pa_raw_crypto 0.3.0` (`c2pa 0.92.3`, optional `c2pa` feature). Documented in `ag/c2pa/deny.toml` ignore list; AI Photo Defense signs only with `SigningAlg::Es256`, not RSA.
+- **Unverified external model/media paths:** `#[ignore]` tests exist for Whisper, ECAPA, and UltraFace; none should be claimed as accuracy-validated until run against real datasets.
+
+### 8. Unfinished features (mapped to Part 5 Expanded Specification)
+
+| Part 5 Expanded Item | Current Status | Gap / Next Work |
+|---|---|---|
+| 1. Photo & video blurring, masking, redaction | **Partial** | Photo redaction + H.264 MP4 box-blur/blackout done (`ag/video-frames`); polygon/lasso/brush GUI drawing and multi-region video masks pending |
+| 2. Intelligent object tracking (scene cuts, occlusion, forward/backward, keyframes) | **Not started** | Needs frame-to-frame tracker, shot-boundary detector, and keyframe timeline UI |
+| 3. Independent frame-level export verification | **Partial** | `redact_mp4` reopens MP4 and checks frame count, audio sample count, metadata absence, and A/V duration; per-frame pixel verification of redacted regions across all frames pending |
+| 4. Expanded detection (faces, plates, documents, screens, addresses, QR/barcodes, manual) | **Partial** | QR/barcodes + text rules on `main`; UltraFace face detection on `ag/face-detect`; plates/documents/screens/OCR models not started |
+| 5. Multimedia workspace (timeline, object mgmt, waveform, transcripts, batch/proxy/guided export) | **Partial** | Waveform, spectrogram, A/B playback, STT, video scrub/redact exist; unified multi-track timeline, object list, batch video export, and proxy video pipeline pending |
+| 6. Voice Assistant Safe Playback (Siri/Google/Alexa/Meta/Bixby) | **Not started** | Needs wake-word dataset/detector, suppression/muting DSP, and real-device tests |
+| 7–8. Optional Ask AI (Ollama / HF, model manager, hardware detection, user approval) | **Not started** | Must remain optional and sandboxed (no arbitrary command execution) |
+| 9. Accessibility & usability | **Partial** | Text clipping fixed in `0.5.0`; AccessKit (Iced 0.14 upgrade), scaling, and keyboard navigation audit pending |
+| 10. Original camera-aperture + shield logo & cross-platform icons | **Not started** | Needs vector SVG + PNG/ICO/ICNS assets wired into `packaging/` and `README.md` |
+| 11. Expanded media formats (sync, orientation, FPS, channels) | **Partial** | AIFF/CAF/MP1/MP2/ADPCM on `main`; Opus on `ag/opus-wma`; H.264 MP4/MOV on `ag/video-frames`; WMA unsupported; AV1/HEVC/ProRes/MKV-strip not started |
+
+### 9. Recommended next assignments for Claude
+
+1. **Review and selectively merge** `ag/voice-protect`, `ag/video-frames`, `ag/opus-wma`, `ag/face-detect`, `ag/c2pa`, `ag/installers`, `ag/gui-smoke` into `main` (fixing any integration conflicts, e.g. `CHANGELOG.md` and `MULTIMEDIA_RESEARCH_REGISTER.md` lines).
+2. **Run real-model and real-media verification** for the `#[ignore]` tests (`APD_ECAPA_DIR`, `APD_FACE_ONNX`, `APD_WHISPER_DIR`, real camera MP4+AAC, real `.opus`/`.webm`) and trigger CI (`gui-smoke` + `release.yml` `workflow_dispatch`).
+3. **Prioritize next Part 5 Expanded features** cleanly: (a) per-frame redaction verification on exported MP4s, (b) camera-aperture + shield logo & icons (`packaging/`), (c) object tracking + keyframe timeline, (d) Voice Assistant Safe Playback, (e) optional Ask AI (Ollama) with explicit user-approval gate.
+
+---
+
 ## Part 5 increment (2026-11-26, Claude Opus 5.5)
 
 Branch `claude/part5-release`, on top of Part 4. The owner asked for Parts 2 to 5 to be merged into `main` so the review can start from one branch. Specification as received (cut off in section 8): [docs/PART5_SPECIFICATION.md](docs/PART5_SPECIFICATION.md). Master checklist and sweep results: [docs/IMPLEMENTATION_MATRIX.md#part-5](docs/IMPLEMENTATION_MATRIX.md#part-5).
