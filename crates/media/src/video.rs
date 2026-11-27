@@ -854,6 +854,14 @@ pub fn redact_mp4(input: &Path, output: &Path, rects: &[RedactRect]) -> Result<V
         "Output must be .mp4 or .mov"
     );
     let d = demux_mp4(input)?;
+    // The source's own audio-minus-video duration; sync is judged as drift from this, because
+    // real recordings often have tracks of slightly different lengths.
+    let src_video_s = d.video_duration_ticks as f64 / f64::from(d.video_timescale.max(1));
+    let src_av_offset_s = d
+        .audio
+        .as_ref()
+        .map(|a| a.duration_ticks as f64 / f64::from(a.timescale.max(1)) - src_video_s)
+        .unwrap_or(0.0);
     let fps_num = if d.video_duration_ticks > 0 {
         ((d.video_samples.len() as f64 * f64::from(d.video_timescale))
             / d.video_duration_ticks as f64)
@@ -965,7 +973,16 @@ pub fn redact_mp4(input: &Path, output: &Path, rects: &[RedactRect]) -> Result<V
     mvhd.extend_from_slice(&0u32.to_be_bytes());
     mvhd.extend_from_slice(&0u32.to_be_bytes());
     mvhd.extend_from_slice(&out_timescale.to_be_bytes());
-    mvhd.extend_from_slice(&(out_duration as u32).to_be_bytes());
+    let movie_duration = d
+        .audio
+        .as_ref()
+        .map(|a| {
+            ((a.duration_ticks as f64 / f64::from(a.timescale.max(1))) * f64::from(out_timescale))
+                .round() as u64
+        })
+        .unwrap_or(0)
+        .max(out_duration);
+    mvhd.extend_from_slice(&(movie_duration as u32).to_be_bytes());
     mvhd.extend_from_slice(&0x0001_0000u32.to_be_bytes());
     mvhd.extend_from_slice(&0x0100u16.to_be_bytes());
     mvhd.extend_from_slice(&[0u8; 10]);
@@ -994,13 +1011,16 @@ pub fn redact_mp4(input: &Path, output: &Path, rects: &[RedactRect]) -> Result<V
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     ensure!(dir.is_dir(), "Output folder must exist");
-    let tmp = tempfile::NamedTempFile::new_in(dir)?;
+    ensure!(
+        !output.exists(),
+        "Output file already exists; choose a new name"
+    );
+    // Write to a temporary file, verify it, and only then move it into place, so a failed
+    // verification never leaves an unverified export behind.
+    let tmp = tempfile::Builder::new().suffix(".mp4").tempfile_in(dir)?;
     std::fs::write(tmp.path(), &out_bytes)?;
-    tmp.persist(output)
-        .map_err(|e| anyhow::anyhow!("Failed to save MP4: {}", e.error))?;
 
-    // Reopen and verify
-    let reopened = std::fs::read(output)?;
+    let reopened = std::fs::read(tmp.path())?;
     let info = mp4::probe(&reopened)?;
     let v_track = info
         .tracks
@@ -1009,8 +1029,9 @@ pub fn redact_mp4(input: &Path, output: &Path, rects: &[RedactRect]) -> Result<V
         .context("Reopened MP4 missing video track")?;
     let a_track = info.tracks.iter().find(|t| t.kind == "audio");
     let duration_s = v_track.duration_s.unwrap_or(0.0);
+    // Drift of the audio/video offset relative to the source.
     let av_sync_diff_s = if let Some(at) = a_track {
-        (duration_s - at.duration_s.unwrap_or(duration_s)).abs()
+        ((at.duration_s.unwrap_or(duration_s) - duration_s) - src_av_offset_s).abs()
     } else {
         0.0
     };
@@ -1018,6 +1039,11 @@ pub fn redact_mp4(input: &Path, output: &Path, rects: &[RedactRect]) -> Result<V
     ensure!(
         v_track.samples == Some(frame_count as u64),
         "Reopened frame count mismatch"
+    );
+    ensure!(
+        (duration_s - src_video_s).abs() < one_frame_s,
+        "Video duration changed by {:.4}s",
+        (duration_s - src_video_s).abs()
     );
     ensure!(
         info.findings.is_empty(),
@@ -1030,17 +1056,19 @@ pub fn redact_mp4(input: &Path, output: &Path, rects: &[RedactRect]) -> Result<V
         );
         ensure!(
             av_sync_diff_s < one_frame_s,
-            "A/V duration difference {av_sync_diff_s:.4}s exceeds 1 frame ({one_frame_s:.4}s)"
+            "A/V sync drifted by {av_sync_diff_s:.4}s, more than 1 frame ({one_frame_s:.4}s)"
         );
     }
 
-    let frame_verify = crate::video_track::verify_redacted_mp4(output, rects)?;
+    let frame_verify = crate::video_track::verify_redacted_mp4(tmp.path(), rects)?;
     ensure!(
         frame_verify.passed,
         "Independent frame-level export verification failed ({} of {} redacted frames failed)",
         frame_verify.failed_frames,
         frame_verify.redacted_frames_checked
     );
+    tmp.persist_noclobber(output)
+        .map_err(|e| anyhow::anyhow!("Failed to save MP4: {}", e.error))?;
 
     Ok(VideoRedactReport {
         width: d.width,

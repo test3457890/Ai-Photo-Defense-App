@@ -11,6 +11,7 @@ Integration of Antigravity's Part 5 branches, reviewed and verified by Claude. H
 - Optional Ask AI (`ask-ai`, models crate only): licence-approved model list and a loopback-only local Ollama client, refused unless enabled; responses capped at 4 MiB. View > Scale 100/125/150 %.
 - Unsigned installers workflow (MSI, .deb, AppImage, .dmg, checksums, SBOM) with pinned tool versions and a checksum-verified appimagetool; GUI smoke tests on Linux and macOS in CI; original logo and app icons.
 - Desktop shows optional-feature controls only when the feature is built in.
+- Real-media validation fixed nine bugs (see docs/PART5_VALIDATION_REPORT.md): safe video export (verify before saving), A/V drift measured against the source, AAC channel discovery, HE-AAC timing, Whisper decoding and timestamps, ECAPA front end now identical to SpeechBrain, converter script, MSI and AppImage packaging. Installers now include H.264 video and Opus.
 
 - H.264 video (`video`, experimental, not in installers): MP4/MOV frame decode, scrub/play preview, time-ranged rectangle redaction (opaque or blur), forward/backward object tracking with scene-cut stop, re-encode with original audio copied, and an independent per-frame verification of the export. CLI `video-redact`, `video-track`.
 - Opus decoding (`opus`, experimental, not in installers) in Ogg/WebM through the same analysis and WAV export path. WMA, AC-3 and AMR remain unsupported.

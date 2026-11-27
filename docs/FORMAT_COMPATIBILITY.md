@@ -58,7 +58,7 @@ streamed, so long files do not need to fit in memory.
 | WAV (PCM 8/16/24/32-bit, float), BWF | Yes | Yes | Yes (RIFF INFO tags exposed by Symphonia; BWF originator fields flagged) | Yes, to WAV | |
 | FLAC | Yes | Yes | Yes (Vorbis comments, pictures) | Yes, to WAV | |
 | MP3 | Yes | Yes | Yes (ID3) | Yes, to WAV | |
-| AAC (ADTS), M4A / MP4 audio | Yes | Yes | Yes | Yes, to WAV | |
+| AAC (ADTS), M4A / MP4 audio | Yes | Yes | Yes | Yes, to WAV | HE-AAC (SBR/PS): only the AAC core is decoded (half rate, mono), reported in the analysis; timing is correct |
 | ALAC (in M4A) | Yes | Yes | Yes | Yes, to WAV | |
 | Ogg Vorbis | Yes | Yes | Yes | Yes, to WAV | |
 | AIFF / AIF / AIFC | Yes | Yes (new in 0.5) | Yes | Yes, to WAV | Symphonia `aiff` feature; tested with a 16-bit stereo file |

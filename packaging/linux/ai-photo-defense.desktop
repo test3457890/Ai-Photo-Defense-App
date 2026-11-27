@@ -3,5 +3,6 @@ Type=Application
 Name=AI Photo Defense
 Comment=Local privacy redaction and media protection
 Exec=photo-desktop
-Categories=Graphics;Photography;Utility;
+Icon=ai-photo-defense
+Categories=Graphics;Photography;
 Terminal=false

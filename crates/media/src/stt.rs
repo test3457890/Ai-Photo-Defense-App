@@ -233,12 +233,9 @@ fn decode_chunk(
     let mut generated = Vec::new();
 
     for step in 0..max_decode {
-        let input_slice: &[u32] = if step == 0 {
-            &tokens
-        } else {
-            &tokens[tokens.len() - 1..]
-        };
-        let x = Tensor::new(input_slice, device)?.unsqueeze(0)?;
+        // candle's Whisper decoder caches only the audio cross-attention and derives token
+        // positions from the input length, so the full sequence is passed on every step.
+        let x = Tensor::new(tokens.as_slice(), device)?.unsqueeze(0)?;
         let ys = model.decoder.forward(&x, &audio_features, step == 0)?;
         let (_, seq_len, _) = ys.dims3()?;
         let logits = model.decoder.final_linear(&ys.i((..1, seq_len - 1..))?)?;
@@ -252,6 +249,7 @@ fn decode_chunk(
         if let Some(v) = logits_vec.get_mut(no_timestamps as usize) {
             *v = f32::NEG_INFINITY;
         }
+        apply_timestamp_rules(&mut logits_vec, &generated, timestamp_begin, eot);
 
         let next_token = logits_vec
             .iter()
@@ -265,6 +263,10 @@ fn decode_chunk(
         }
         tokens.push(next_token);
         generated.push(next_token);
+        if let Some(cut) = repetition_cut(&generated, timestamp_begin) {
+            generated.truncate(cut);
+            break;
+        }
     }
 
     Ok(parse_timestamped_tokens(
@@ -277,6 +279,93 @@ fn decode_chunk(
 }
 
 /// Converts generated Whisper token IDs (including timestamp tokens) into `Segment`s.
+/// Whisper's timestamp rules (as in the reference decoder): the output starts with a timestamp,
+/// timestamps come in pairs and never decrease, and a timestamp is chosen whenever timestamps are
+/// collectively more likely than any single text token. Without them the model rarely emits
+/// timestamps and segments span whole 30-second windows.
+fn apply_timestamp_rules(logits: &mut [f32], generated: &[u32], ts_begin: u32, eot: u32) {
+    let tb = ts_begin as usize;
+    if tb >= logits.len() {
+        return;
+    }
+    let is_ts = |t: u32| t >= ts_begin;
+    let last = generated.last().copied();
+    let penult = generated.len().checked_sub(2).map(|i| generated[i]);
+    if generated.is_empty() {
+        // First token must be a timestamp (and no later than 1 s).
+        for v in logits[..tb].iter_mut() {
+            *v = f32::NEG_INFINITY;
+        }
+        for v in logits.iter_mut().skip(tb + 50) {
+            *v = f32::NEG_INFINITY;
+        }
+        return;
+    }
+    if let Some(l) = last
+        && is_ts(l)
+    {
+        // As in the reference decoder, "no penultimate token" counts as a timestamp, so the
+        // opening timestamp is followed by text.
+        if penult.is_none_or(is_ts) {
+            // A pair just closed: the next token must be text (or end).
+            for v in logits[tb..].iter_mut() {
+                *v = f32::NEG_INFINITY;
+            }
+        } else {
+            // An open timestamp: the next token must be a timestamp or end of text.
+            for (i, v) in logits[..tb].iter_mut().enumerate() {
+                if i as u32 != eot {
+                    *v = f32::NEG_INFINITY;
+                }
+            }
+        }
+    }
+    // Timestamps never go backwards.
+    if let Some(&max_ts) = generated.iter().filter(|&&t| is_ts(t)).max() {
+        let upto = (max_ts as usize).min(logits.len());
+        for v in logits[tb..upto].iter_mut() {
+            *v = f32::NEG_INFINITY;
+        }
+    }
+    // Prefer a timestamp when the timestamp mass beats the best text token (log-space).
+    let max_all = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    if !max_all.is_finite() {
+        return;
+    }
+    let lse = |xs: &[f32]| -> f32 {
+        let s: f32 = xs.iter().map(|x| (x - max_all).exp()).sum();
+        s.ln() + max_all
+    };
+    let ts_lse = lse(&logits[tb..]);
+    let text_max = logits[..tb]
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    if ts_lse > text_max {
+        for v in logits[..tb].iter_mut() {
+            *v = f32::NEG_INFINITY;
+        }
+    }
+}
+
+/// Detects a decoding loop (the same run of 3-12 text tokens repeated three times in a row at the
+/// end) and returns where the first repeat starts, so the repeats can be dropped.
+fn repetition_cut(generated: &[u32], ts_begin: u32) -> Option<usize> {
+    for n in 3..=12usize {
+        if generated.len() < 3 * n {
+            continue;
+        }
+        let end = generated.len();
+        let a = &generated[end - n..];
+        let b = &generated[end - 2 * n..end - n];
+        let c = &generated[end - 3 * n..end - 2 * n];
+        if a == b && b == c && a.iter().any(|&t| t < ts_begin) {
+            return Some(end - 2 * n);
+        }
+    }
+    None
+}
+
 fn parse_timestamped_tokens(
     tokens: &[u32],
     timestamp_begin: u32,
@@ -438,6 +527,36 @@ pub fn find_private(segments: &[Segment], countries: &[Country]) -> Vec<audio::S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn timestamp_rules_follow_reference_decoder() {
+        let (tb, eot) = (100u32, 50u32);
+        // First token: only early timestamps.
+        let mut l = vec![0f32; 300];
+        apply_timestamp_rules(&mut l, &[], tb, eot);
+        assert!(
+            l[..100].iter().all(|v| v.is_infinite()) && l[100].is_finite() && l[160].is_infinite()
+        );
+        // After the opening timestamp: text, not another timestamp.
+        let mut l = vec![0f32; 300];
+        apply_timestamp_rules(&mut l, &[110], tb, eot);
+        assert!(l[10].is_finite() && l[120].is_infinite());
+        // Open timestamp after text: timestamp or end of text only, never earlier than 110.
+        let mut l = vec![0f32; 300];
+        apply_timestamp_rules(&mut l, &[110, 5, 6, 120], tb, eot);
+        assert!(l[5].is_infinite() && l[105].is_infinite());
+        assert!(l[125].is_finite());
+    }
+
+    #[test]
+    fn repetition_guard_cuts_loops() {
+        let mut g = vec![100, 1, 2];
+        for _ in 0..3 {
+            g.extend([7, 8, 9, 10]);
+        }
+        assert_eq!(repetition_cut(&g, 100), Some(7));
+        assert_eq!(repetition_cut(&[100, 1, 2, 3, 4, 5, 6], 100), None);
+    }
 
     fn tiny_test_config() -> Config {
         Config {

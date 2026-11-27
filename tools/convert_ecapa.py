@@ -1,10 +1,12 @@
-//! Offline converter for `speechbrain/spkrec-ecapa-voxceleb` (Apache-2.0) to SafeTensors
-//! plus a schema-2 `photo-models` manifest and parity reference embeddings.
-//!
-//! Usage (run once offline in an environment with torch, speechbrain, and safetensors):
-//!   python tools/convert_ecapa.py --src /path/to/spkrec-ecapa-voxceleb --out /path/to/ecapa_out
-//!
-//! Never shipped or invoked by the Rust application.
+"""Offline converter for `speechbrain/spkrec-ecapa-voxceleb` (Apache-2.0) to SafeTensors
+plus a schema-2 `photo-models` manifest and parity reference embeddings.
+
+Usage (run once offline in an environment with torch, speechbrain and safetensors):
+  python tools/convert_ecapa.py --src /path/to/spkrec-ecapa-voxceleb --out /path/to/ecapa_out
+
+--src must contain the model card's files (embedding_model.ckpt, mean_var_norm_emb.ckpt,
+classifier.ckpt, label_encoder.txt, hyperparams.yaml). Never shipped or run by the application.
+"""
 
 import argparse
 import hashlib

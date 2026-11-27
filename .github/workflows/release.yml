@@ -40,13 +40,13 @@ jobs:
           persist-credentials: false
       - run: rustup toolchain install 1.100.0 --profile minimal
       - name: Build release binaries
-        run: cargo build --locked --release -p photo-desktop -p photo-cli --features photo-desktop/faces,photo-desktop/c2pa,photo-cli/faces,photo-cli/c2pa
+        run: cargo build --locked --release -p photo-desktop -p photo-cli --features photo-desktop/faces,photo-desktop/c2pa,photo-desktop/video,photo-desktop/opus,photo-cli/faces,photo-cli/c2pa,photo-cli/video,photo-cli/opus
       - name: Install cargo-wix and build unsigned MSI
         shell: pwsh
         run: |
           cargo install cargo-wix --version 0.3.9 --locked
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          cargo wix --nocapture --no-build -p photo-desktop -i packaging/wix/main.wxs -o dist/ai-photo-defense-windows-x64-unsigned.msi
+          cargo wix --nocapture --no-build -p photo-desktop -o dist/ai-photo-defense-windows-x64-unsigned.msi
           Copy-Item LICENSE, THIRD_PARTY.md, PRIVACY.md dist/
           Get-FileHash dist/* -Algorithm SHA256 | ForEach-Object {
             "$($_.Hash.ToLower())  $(Split-Path -Leaf $_.Path)"
@@ -69,7 +69,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config desktop-file-utils libfuse2
       - name: Build release binaries
-        run: cargo build --locked --release -p photo-desktop -p photo-cli --features photo-desktop/faces,photo-desktop/c2pa,photo-cli/faces,photo-cli/c2pa
+        run: cargo build --locked --release -p photo-desktop -p photo-cli --features photo-desktop/faces,photo-desktop/c2pa,photo-desktop/video,photo-desktop/opus,photo-cli/faces,photo-cli/c2pa,photo-cli/video,photo-cli/opus
       - name: Build .deb package
         run: |
           mkdir -p dist
@@ -83,6 +83,9 @@ jobs:
           cp packaging/linux/ai-photo-defense.desktop AppDir/ai-photo-defense.desktop
           cp packaging/linux/ai-photo-defense.desktop AppDir/usr/share/applications/ai-photo-defense.desktop
           cp LICENSE THIRD_PARTY.md PRIVACY.md AppDir/usr/share/doc/ai-photo-defense/
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          cp assets/icons/icon-256.png AppDir/ai-photo-defense.png
+          cp assets/icons/icon-256.png AppDir/usr/share/icons/hicolor/256x256/apps/ai-photo-defense.png
           cat > AppDir/AppRun << 'EOF'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "$0")")"
@@ -120,7 +123,7 @@ jobs:
       - run: rustup toolchain install 1.100.0 --profile minimal
       - run: rustup target add ${{ matrix.target }} --toolchain 1.100.0
       - name: Build release binaries
-        run: cargo build --locked --release --target ${{ matrix.target }} -p photo-desktop -p photo-cli --features photo-desktop/faces,photo-desktop/c2pa,photo-cli/faces,photo-cli/c2pa
+        run: cargo build --locked --release --target ${{ matrix.target }} -p photo-desktop -p photo-cli --features photo-desktop/faces,photo-desktop/c2pa,photo-desktop/video,photo-desktop/opus,photo-cli/faces,photo-cli/c2pa,photo-cli/video,photo-cli/opus
       - name: Create .app bundle and unsigned .dmg
         run: |
           APP="dist/stage/AI Photo Defense.app"

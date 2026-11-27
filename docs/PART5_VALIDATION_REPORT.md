@@ -48,3 +48,32 @@ Checks: all media tests pass with `video,opus` (20); workspace 115 passed with a
 
 Not tested: a real phone recording with AAC audio, HEVC/AV1 inputs (refused), real `.opus`/`.webm` files. Both features stay out of the installers until a real-file test passes.
 
+## Real-media and real-model validation (2026-11-27)
+
+All media below is public domain or used only for local testing; none is committed.
+
+| Check | Input | Result |
+|---|---|---|
+| Video redaction | NASA Expedition 72 Thanksgiving message (public domain), 320x180 H.264 15 fps, HE-AAC stereo, 120 s | 1,801 frames in and out; video duration unchanged; A/V offset drift 0 s; every redacted frame verified; metadata removed; 6 s |
+| Video tracking | same clip, box at 10 s | 1,801 frames tracked and verified, 107 s. Static camera and a background box: shows the pipeline on real footage, not tracking of a moving face |
+| Desktop video panel | same clip | decodes, scrubs and plays real footage (screenshot `part5-video-real-iss.png`) |
+| Opus | Wikimedia Commons "Speech 12dB opus 7kbps" (CC BY 3.0) | 10.81 s decoded, 0 errors, -23.1 LUFS, verified WAV export |
+| Whisper tiny (MIT/Apache-2.0 weights) | ISS clip speech | 17 sentence-level segments with timestamps, accurate English text, 16.6 s for 120 s of audio on CPU. Limits: words lost at some 30 s window boundaries; a one-word hallucination on trailing silence |
+| ECAPA parity | SpeechBrain spkrec-ecapa-voxceleb (Apache-2.0), converted with `tools/convert_ecapa.py` | cosine to SpeechBrain 1.000000 / 0.999999 / 0.999999 on the three reference signals |
+| Voice protection, Balanced profile | 15 s of the ISS speech at 16 kHz, SNR 30 dB | ECAPA similarity to original 0.886 (Rust and SpeechBrain agree); after simulated compression 0.700; after simulated denoise 0.944; **x-vector (a different SpeechBrain model) 0.9999** |
+| Voice protection at 11 kHz | same speech at its native 11,025 Hz | Rust ECAPA 0.80 but SpeechBrain 0.96: the perturbation does not survive a different resampler |
+
+**Conclusion on voice protection:** the engine changes the embedding of the one model it optimises against, a denoiser undoes most of it, resampling weakens it, and it does not transfer to a second speaker model. It is **not** voice-cloning protection and is not offered in the installers. No cloning system was tested.
+
+## Bugs found and fixed by these real-world tests
+
+1. **A failed video export left an unverified file behind**; the export is now written to a temporary file, verified, and only then moved into place (never overwriting).
+2. **Real recordings were rejected**: the A/V check compared audio and video lengths directly, although phone and broadcast files often have tracks of slightly different length. It now measures drift from the source's own offset. The movie header now uses the longest track.
+3. **AAC in MP4 could not be decoded** when the container does not state the channel count ("Unknown channel layout"); the decoder now learns it from the first packet.
+4. **HE-AAC played at double speed** (Symphonia decodes only the AAC core at half rate). Detected from packet timing; the core rate is used so timing is right, and the reduced quality is reported in the analysis and export notes.
+5. **Whisper produced no text**: the decoder fed only the newest token while candle's Whisper expects the full sequence.
+6. **Whisper segments spanned 30 s and looped**: the reference timestamp rules and a repetition guard were added, so detected private speech can be bleeped precisely.
+7. **ECAPA did not match SpeechBrain** (cosine 0.75): wrong window, mel filters, no centring, no 80 dB floor, and an extra mean subtraction. Fixed to match SpeechBrain exactly.
+8. **`tools/convert_ecapa.py` was not valid Python** (Rust comment syntax).
+9. **Installer workflow**: the MSI step passed the WiX file to the wrong cargo-wix option; the AppImage had no icon. Both fixed; video and Opus are now included in installers after passing on real files.
+

@@ -271,20 +271,20 @@ Specification: [PART5_SPECIFICATION.md](PART5_SPECIFICATION.md) (received cut of
 | Diagnostics, Performance, Forensics, Format Inspection pages | Implemented and independently tested | Windows GUI screenshots |
 | Audio decode/analysis/redaction/export, A/B playback | Implemented and independently tested | media tests, GUI run, CLI check of outputs |
 | AIFF, CAF, MP1/MP2, ADPCM decode | Implemented but insufficiently tested | AIFF tested; CAF/MP2/ADPCM not tested with real files |
-| Opus decode | Implemented but insufficiently tested (optional `opus`, not in installers) | FilmCraft `craft-audio`; round-trip test with craft's Opus encoder; no real .opus file tested |
+| Opus decode | Implemented and independently tested (`opus`, in installers) | real Opus file: 0 errors, verified export |
 | WMA, AC-3, AMR decode | Blocked by technical limitations | no licence-clean Rust decoder found |
 | MP4-family metadata removal | Implemented and independently tested | 1,500 mutations, GUI + CLI verification (synthetic files only) |
 | Matroska metadata removal | Not implemented | inspection only |
 | Subtitle Privacy Scan and redaction | Implemented and independently tested | tests, GUI export, CLI check |
-| Video frame decode, preview, redaction, re-encode, tracking (H.264 MP4/MOV) | Implemented but insufficiently tested (optional `video`, not in installers) | FilmCraft `craft-video` pinned by commit; synthetic 320x240 clip: 90/90 frames redacted and re-encoded, A/V drift 0, per-frame verification 90 checked / 0 failed; desktop scrub and play checked; no real phone clip tested |
+| Video frame decode, preview, redaction, re-encode, tracking (H.264 MP4/MOV) | Implemented and independently tested (`video`, in installers) | real NASA clip with HE-AAC audio: 1,801 frames redacted and verified, A/V drift 0; desktop playback; tracking of moving faces not yet evaluated |
 | Video adversarial protection | Not supported by sufficient research | no licence-compatible validated method with weights; FaceShield is research-only |
-| Voice-cloning protection | Experimental (optional `voice-protect`, not in installers) | Rust ECAPA-TDNN objective; parity with SpeechBrain and protection effect not measured (PyTorch unavailable for conversion on the test machine) |
-| Automatic spoken-content detection | Implemented but insufficiently tested (optional `stt`) | Whisper via candle; accuracy not measured (no weights on the test machine); text rules match written forms only |
+| Voice-cloning protection | Not supported by sufficient research (engine experimental, not in installers) | ECAPA matches SpeechBrain (cosine 0.999999); on real speech the effect is limited to that encoder (0.886), removed by denoising (0.944) and absent in a second model (0.9999). See PART5_VALIDATION_REPORT |
+| Automatic spoken-content detection | Implemented but insufficiently tested (optional `stt`) | Whisper tiny on real speech: accurate sentence-level timestamps; no labelled private-speech test set; spoken forms ("at", "dot") not matched by text rules |
 | Voice-assistant safe playback | Experimental (CLI, needs `stt`) | not tested on physical assistant devices |
 | Invisible ownership watermark | Implemented and independently tested (CLI) | tests incl. JPEG 70-90 survival; real photo check; not in GUI yet |
 | C2PA content credentials | Implemented but insufficiently tested (optional `c2pa`, in installers) | inspection and ES256 signing unit-tested with a generated test chain; not tested with a CA-issued certificate |
 | Linux / macOS | Implemented but insufficiently tested | CI builds and tests on Linux, macOS Intel and Apple Silicon; new `gui-smoke` CI job launches the app and captures screenshots (results in the PR checks) |
-| Installers | Implemented but insufficiently tested | `release.yml` builds unsigned MSI/.deb/AppImage/.dmg with checksums and SBOM; first run pending |
+| Installers | Implemented but insufficiently tested | first workflow run: macOS .dmg (Intel, Apple Silicon) and SBOM built; MSI and AppImage fixed after the run; unsigned |
 | Signed releases, updater | Not implemented | no signing credentials; no updater (the app makes no network connections) |
 | Competitive benchmarks | Blocked by technical limitations | comparison tools not installed |
 

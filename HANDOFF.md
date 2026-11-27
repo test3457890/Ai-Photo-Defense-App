@@ -1,5 +1,9 @@
 # AI Photo Defense development handoff
 
+## Real-world validation (2026-11-27)
+
+Every remaining "untested" item that could be tested on this machine was run on real media and real models; results and the nine bugs they exposed are in [docs/PART5_VALIDATION_REPORT.md](docs/PART5_VALIDATION_REPORT.md#real-media-and-real-model-validation-2026-11-27). Headline: video, Opus and Whisper work on real files; the Rust ECAPA now matches SpeechBrain exactly; **voice protection does not transfer to a second model and is not protection**. Still impossible here: voice-assistant devices, a CA-issued C2PA certificate, real cloning systems.
+
 ## Part 5 integration (2026-11-26, Claude Opus 5.5 with Google Antigravity)
 
 Antigravity built twelve `ag/*` branches; Claude reviewed them, merged eight into `claude/part5-integration`, fixed what the review found, and ran the checks. Full record: [docs/PART5_VALIDATION_REPORT.md](docs/PART5_VALIDATION_REPORT.md).
