@@ -1,4 +1,4 @@
-# Format and codec compatibility (Part 4, version 0.4.0)
+# Format and codec compatibility (version 0.5.0)
 
 What this build can actually do with each format. A format is **not supported** unless a column
 says otherwise. Every file is identified from its content (`photo_media::detect`, magic bytes and
@@ -59,9 +59,11 @@ streamed, so long files do not need to fit in memory.
 | AAC (ADTS), M4A / MP4 audio | Yes | Yes | Yes | Yes, to WAV | |
 | ALAC (in M4A) | Yes | Yes | Yes | Yes, to WAV | |
 | Ogg Vorbis | Yes | Yes | Yes | Yes, to WAV | |
-| W64, CAF | Detect | No | No | No | |
-| AIFF / AIF | Detect | **No** | No | No | Symphonia 0.5 has no AIFF demuxer |
-| Opus | Detect | **No** | No | No | no Opus decoder in Symphonia 0.5 |
+| AIFF / AIF / AIFC | Yes | Yes (new in 0.5) | Yes | Yes, to WAV | Symphonia `aiff` feature; tested with a 16-bit stereo file |
+| CAF | Yes | Yes (new in 0.5; codec permitting) | Yes | Yes, to WAV | not tested with a real CAF file |
+| MP1 / MP2, IMA/MS ADPCM (in WAV/AIFF/CAF) | Yes | Yes (new in 0.5) | Yes | Yes, to WAV | not tested with real files |
+| W64 | Detect | No | No | No | no demuxer |
+| Opus | Detect | **No** | No | No | no Opus decoder in Symphonia 0.5; a pure-Rust Opus decoder has not been reviewed |
 | WMA, AC-3, E-AC-3, AMR | Detect | No | No | No | |
 
 Export writes a new WAV: 16-bit PCM when the source is 16-bit integer, otherwise 32-bit float.

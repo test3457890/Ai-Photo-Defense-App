@@ -52,3 +52,38 @@ effectiveness number from any paper is reported as a property of this applicatio
 - **Next verification work:** read the licences of the unverified rows, obtain a speaker encoder
   whose code and weights may be redistributed, and reproduce one published result (including a
   De-AntiFake-style purification test) before any resistance claim.
+
+## Licence check of the remaining projects (2026-11-26)
+
+Read from each project's official page, repository, model card or paper by the Google Antigravity agent on the owner's machine, at Claude's request, and reviewed by Claude. Only facts stated on those pages are kept; Claude did not re-open every page. "-" means not stated.
+
+| Project | Code licence | Weights | Notes relevant to this application |
+|---|---|---|---|
+| Voice Guard (IJCAI 2023) | - | - | Built on AttackVC; cannot be reused without a licence |
+| Enkidu (ACM MM 2025) | - | uses SpeechBrain ECAPA | PyTorch 2.4; real-time claim |
+| Good Noise | - (core optimiser is a closed API) | SpeechBrain, Whisper | about 37 MB GPU memory per audio second |
+| SceneGuard | MIT | user-downloaded upstream models | adds audible scene noise (SNR 10 to 20 dB) |
+| VoiceCloak (2025) | - | - | demo page only |
+| SafeSpeech (USENIX Security 2025) | MIT | Zenodo 14736906 | paper reports DEMUCS denoising and MP3 compression partly undo it; needs a GPU |
+| E2E-VGuard (arXiv 2511.07099) | - | - | |
+| CloneShield (arXiv 2505.19119) | - | - | no repository linked |
+| De-AntiFake | none on GitHub | MIT (Hugging Face model card) | purification attack: the evaluation tool for any future voice protection |
+| DiffVax (ICLR 2026) | MIT | - | |
+| TC-UAP (NeurIPS 2026) | starting kit Apache-2.0; full code not linked | - | temporally consistent video protection |
+| Anti-I2V (CVPR 2026) | code "coming soon" | - | |
+| FaceShield (ICCV 2025) | KUAICV research-only, non-commercial | research-only | **cannot be shipped** in a product for real users |
+| DiffusionGuard (ICLR 2025) | - | uses Stable Diffusion inpainting | |
+| Fawkes (USENIX Security 2020) | BSD-3-Clause ("personal privacy or academic research") | - | TensorFlow |
+| Glaze, Nightshade | closed source | not distributed | cannot be integrated |
+| **SpeechBrain ECAPA-TDNN** (spkrec-ecapa-voxceleb) | **Apache-2.0** | **Apache-2.0** (Hugging Face) | **licence-compatible speaker encoder** for a voice-protection objective; weights are a PyTorch checkpoint and would need conversion to SafeTensors |
+| WavLM base-plus-sv | CC-BY-SA-3.0 | CC-BY-SA-3.0 | share-alike obligations |
+| Resemblyzer (GE2E) | Apache-2.0 | Apache-2.0 (in repo) | second licence-compatible speaker encoder |
+| **OpenAI Whisper** | **MIT** | **MIT** | **licence-compatible speech-to-text** for detecting spoken names and numbers; candle (already a dependency) has a Rust Whisper implementation |
+| rav1e | BSD-2-Clause | - | AV1 encoder |
+| openh264-rs | BSD-2-Clause | - | wraps Cisco OpenH264; H.264 patents apply |
+| MediaInfoLib | BSD-2-Clause | - | C++ |
+| avio | MIT OR Apache-2.0 | - | wraps FFmpeg (LGPL/GPL inherited) |
+| Symphonia AIFF | MPL-2.0 | - | `aiff` feature since 0.5.4: **now enabled** |
+
+Consequence: voice-cloning protection and spoken-content detection are no longer blocked by licensing. They are blocked by implementation and validation work: porting ECAPA-TDNN (or GE2E) and Whisper to candle, converting weights, and measuring against real cloning systems with a De-AntiFake purification test. Antigravity's raw notes are not committed.
+

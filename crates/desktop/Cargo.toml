@@ -7,7 +7,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-iced = { version = "0.13.1", default-features = false, features = ["tiny-skia", "image-without-codecs", "tokio", "auto-detect-theme", "lazy"] }
+iced = { version = "0.13.1", default-features = false, features = ["tiny-skia", "image-without-codecs", "tokio", "auto-detect-theme", "lazy", "advanced"] }
 rfd = "0.15"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 image.workspace = true

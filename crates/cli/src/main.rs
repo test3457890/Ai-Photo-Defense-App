@@ -138,6 +138,31 @@ enum Command {
     Forensics { input: PathBuf },
     /// Extract the embedded camera preview from a RAW file as a new JPEG (no RAW development).
     RawPreview { input: PathBuf, output: PathBuf },
+    /// Embed an invisible ownership watermark (48-bit payload). The passphrase is read from the
+    /// environment variable named by --key-env so it does not appear in shell history.
+    /// Survives JPEG quality 70+; does NOT survive resizing or cropping and is not AI protection.
+    WatermarkEmbed {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Payload number to embed (0 to 2^48-1), for example an owner or licence ID.
+        #[arg(long)]
+        payload: u64,
+        #[arg(long, default_value = "APD_WATERMARK_KEY")]
+        key_env: String,
+        #[arg(long, value_enum, default_value_t = Format::Png)]
+        format: Format,
+        #[arg(long, default_value_t = 92)]
+        quality: u8,
+        #[arg(long, default_value_t = 4.0)]
+        strength: f32,
+    },
+    /// Look for a watermark made with the passphrase in --key-env.
+    WatermarkDetect {
+        input: PathBuf,
+        #[arg(long, default_value = "APD_WATERMARK_KEY")]
+        key_env: String,
+    },
     /// Identify any media file by content and list its tracks, codecs and privacy metadata.
     MediaInspect { input: PathBuf },
     /// Remove privacy metadata from MP4/MOV/M4A/3GP without re-encoding; verifies every chunk.
@@ -600,6 +625,45 @@ fn main() -> Result<()> {
                 p.candidates
             );
         }
+        Command::WatermarkEmbed {
+            input,
+            output,
+            payload,
+            key_env,
+            format,
+            quality,
+            strength,
+        } => {
+            ensure!(payload < 1 << 48, "Payload must be below 2^48");
+            let key = watermark_key(&key_env)?;
+            let photo = load(&input)?;
+            let mut rgb = photo.pixels.to_rgb8();
+            photo_edit::watermark::embed(&mut rgb, key, payload, strength)?;
+            let img = image::DynamicImage::ImageRgb8(rgb);
+            let bytes = encode(&img, format.into(), quality)?;
+            let check =
+                photo_edit::watermark::detect(&image::load_from_memory(&bytes)?.to_rgb8(), key)?;
+            ensure!(
+                check.payload == Some(payload),
+                "Watermark did not survive encoding at these settings; raise quality or strength"
+            );
+            save_new(&output, &bytes)?;
+            println!(
+                "Embedded and verified after encoding (confidence {:.3}). Not AI protection; does not survive resizing or cropping.",
+                check.confidence
+            );
+        }
+        Command::WatermarkDetect { input, key_env } => {
+            let key = watermark_key(&key_env)?;
+            let photo = load(&input)?;
+            let d = photo_edit::watermark::detect(&photo.pixels.to_rgb8(), key)?;
+            println!("{}", serde_json::to_string_pretty(&d)?);
+            if d.payload.is_none() {
+                eprintln!(
+                    "No watermark for this passphrase (or it was removed, resized or cropped)."
+                );
+            }
+        }
         Command::MediaInspect { input } => {
             let b = read_media(&input)?;
             let det = photo_media::detect(&b);
@@ -702,6 +766,15 @@ fn main() -> Result<()> {
         ),
     }
     Ok(())
+}
+fn watermark_key(var: &str) -> Result<u64> {
+    let p = std::env::var(var)
+        .with_context(|| format!("Set the passphrase in the environment variable {var}"))?;
+    ensure!(
+        p.chars().count() >= 8,
+        "Use a watermark passphrase of at least 8 characters"
+    );
+    Ok(photo_edit::watermark::key_from_passphrase(&p))
 }
 /// Bounded read of a media file (regular files only).
 fn read_media(path: &Path) -> Result<Vec<u8>> {

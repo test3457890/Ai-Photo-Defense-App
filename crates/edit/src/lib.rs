@@ -12,6 +12,7 @@ pub mod color;
 pub mod layers;
 pub mod mask;
 pub mod proxy;
+pub mod watermark;
 pub use color::Adjustments;
 pub use layers::{BlendMode, LayerMask};
 pub use mask::{Mask, Selection};
@@ -131,6 +132,15 @@ impl Concealment {
     pub const WHITE: Self = Self::Solid {
         rgb: [255, 255, 255],
     };
+    /// Concealment too weak for text: small blur radii and small blocks leave characters
+    /// readable or reconstructable (see `weak_concealment_leaves_text_structure`).
+    pub fn is_weak(self) -> bool {
+        match self {
+            Self::GaussianBlur { sigma } => sigma < 8.0,
+            Self::Pixelate { block } | Self::Mosaic { block } => block < 12,
+            Self::Solid { .. } => false,
+        }
+    }
     pub fn is_secure_redaction(self) -> bool {
         matches!(self, Self::Solid { .. })
     }
@@ -658,6 +668,11 @@ impl EditStack {
     pub fn is_empty(&self) -> bool {
         self.active_len() == 0
     }
+    pub fn has_weak_concealment(&self) -> bool {
+        self.active()
+            .iter()
+            .any(|o| matches!(o, Operation::Conceal { method, .. } if method.is_weak()))
+    }
     pub fn has_visual_only_concealment(&self) -> bool {
         self.active().iter().any(
             |o| matches!(o, Operation::Conceal { method, .. } if !method.is_secure_redaction()),
@@ -770,6 +785,49 @@ impl EditStack {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Residual contrast of a text-like pattern (3 px strokes, 6 px period) after concealment,
+    /// relative to the original. Weak settings keep enough structure to read strokes.
+    fn residual_contrast(method: Concealment) -> f64 {
+        let img = DynamicImage::ImageLuma8(image::GrayImage::from_fn(96, 48, |x, _| {
+            image::Luma([if x % 6 < 3 { 0 } else { 255 }])
+        }));
+        let mut s = EditStack::new();
+        s.push(Operation::Conceal {
+            selection: Selection::Rect(Rect::new(0, 0, 96, 48)),
+            method,
+            invert: false,
+        })
+        .unwrap();
+        let out = s.render(&img).unwrap().to_luma8();
+        let row: Vec<f64> = (24..72).map(|x| out.get_pixel(x, 24)[0] as f64).collect();
+        let mean = row.iter().sum::<f64>() / row.len() as f64;
+        let sd = (row.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / row.len() as f64).sqrt();
+        sd / 127.5
+    }
+    #[test]
+    fn weak_concealment_leaves_text_structure() {
+        let weak_blur = residual_contrast(Concealment::GaussianBlur { sigma: 1.0 });
+        let strong_blur = residual_contrast(Concealment::GaussianBlur { sigma: 12.0 });
+        let weak_mosaic = residual_contrast(Concealment::Mosaic { block: 4 });
+        let strong_mosaic = residual_contrast(Concealment::Mosaic { block: 24 });
+        assert!(weak_blur > 0.3, "weak blur keeps strokes: {weak_blur}");
+        assert!(
+            strong_blur < 0.05,
+            "strong blur removes strokes: {strong_blur}"
+        );
+        assert!(
+            weak_mosaic > 0.2,
+            "small blocks keep strokes: {weak_mosaic}"
+        );
+        assert!(
+            strong_mosaic < 0.05,
+            "large blocks remove strokes: {strong_mosaic}"
+        );
+        assert!(Concealment::GaussianBlur { sigma: 1.0 }.is_weak());
+        assert!(!Concealment::GaussianBlur { sigma: 12.0 }.is_weak());
+        assert!(Concealment::Mosaic { block: 4 }.is_weak());
+        assert!(!Concealment::BLACK.is_weak());
+    }
     fn gradient(w: u32, h: u32) -> DynamicImage {
         DynamicImage::ImageRgb8(image::RgbImage::from_fn(w, h, |x, y| {
             image::Rgb([

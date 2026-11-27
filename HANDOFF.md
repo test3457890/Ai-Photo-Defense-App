@@ -1,5 +1,15 @@
 # AI Photo Defense development handoff
 
+## Part 5 increment (2026-11-26, Claude Opus 5.5)
+
+Branch `claude/part5-release`, on top of Part 4. The owner asked for Parts 2 to 5 to be merged into `main` so the review can start from one branch. Specification as received (cut off in section 8): [docs/PART5_SPECIFICATION.md](docs/PART5_SPECIFICATION.md). Master checklist and sweep results: [docs/IMPLEMENTATION_MATRIX.md#part-5](docs/IMPLEMENTATION_MATRIX.md#part-5).
+
+- **Fixed:** text-field overflow reported with screenshots by the owner (`crates/desktop/src/clip.rs`, `views::field`). Verified in the release build while typing and after leaving the field.
+- **Added:** weak-concealment warnings (inspector, pre-export review, export report) with a recoverability test; AIFF/CAF/MP1/MP2/ADPCM decoding; invisible watermark (`photo_edit::watermark`, CLI only).
+- **Research:** licence check of 25 projects, done by the Google Antigravity agent on the owner's machine at Claude's request, reviewed and condensed into the research register.
+- **Verified:** fmt, clippy `-D warnings`, all tests, `cargo audit` (no vulnerabilities), `cargo deny`, release build, GUI retest on Windows 10.
+- **Still not built (reasons in the checklist):** voice-cloning protection and spoken-content detection (licence-compatible models now identified: SpeechBrain ECAPA / Resemblyzer, Whisper; the candle ports and validation are the next work), video frame decoding and protection, Opus/WMA decoding, face detection, C2PA signing, installers and signed releases, GUI runtime checks on Linux and macOS.
+
 ## Part 4 increment (2026-11-26, Claude Opus 5.5)
 
 Branch `claude/part4-multimedia`, stacked on `claude/part3-studio` (PR #8), which is stacked on `claude/part2-privacy-editing` (PR #7). None is merged: the owner asked to wait for an independent review. Starting commit `5914128ab01d17eb61ff9a8888e2cc9b56128002`. Specification (verbatim): [docs/PART4_SPECIFICATION.md](docs/PART4_SPECIFICATION.md); status: [docs/IMPLEMENTATION_MATRIX.md](docs/IMPLEMENTATION_MATRIX.md#part-4). The earlier video-editor idea is archived in [docs/archive/DEFERRED_VIDEO_EDITOR_CONCEPT.md](docs/archive/DEFERRED_VIDEO_EDITOR_CONCEPT.md).
