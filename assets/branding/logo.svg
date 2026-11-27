@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="shieldBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+    <linearGradient id="shieldStroke" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#0EA5E9"/>
+    </linearGradient>
+    <linearGradient id="bladeA" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#0284C7"/>
+    </linearGradient>
+    <linearGradient id="bladeB" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22D3EE"/>
+      <stop offset="100%" stop-color="#0369A1"/>
+    </linearGradient>
+    <radialGradient id="irisCore" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#E0F2FE"/>
+      <stop offset="65%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#0284C7"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Outer Shield -->
+  <path d="M256 28 L444 96 V244 C444 358 364 446 256 484 C148 446 68 358 68 244 V96 Z"
+        fill="url(#shieldBg)" stroke="url(#shieldStroke)" stroke-width="18" stroke-linejoin="round"/>
+  <path d="M256 54 L418 112 V242 C418 340 348 418 256 454 C164 418 94 340 94 242 V112 Z"
+        fill="none" stroke="#38BDF8" stroke-opacity="0.22" stroke-width="4" stroke-linejoin="round"/>
+
+  <!-- Camera Aperture Ring -->
+  <circle cx="256" cy="248" r="126" fill="#0B1220" stroke="#38BDF8" stroke-width="8"/>
+
+  <!-- 6 Aperture Blades -->
+  <g transform="translate(256, 248)">
+    <polygon points="0,-112 97,-56 42,-24 -24,-62" fill="url(#bladeA)" stroke="#0F172A" stroke-width="5" stroke-linejoin="round" transform="rotate(0)"/>
+    <polygon points="0,-112 97,-56 42,-24 -24,-62" fill="url(#bladeB)" stroke="#0F172A" stroke-width="5" stroke-linejoin="round" transform="rotate(60)"/>
+    <polygon points="0,-112 97,-56 42,-24 -24,-62" fill="url(#bladeA)" stroke="#0F172A" stroke-width="5" stroke-linejoin="round" transform="rotate(120)"/>
+    <polygon points="0,-112 97,-56 42,-24 -24,-62" fill="url(#bladeB)" stroke="#0F172A" stroke-width="5" stroke-linejoin="round" transform="rotate(180)"/>
+    <polygon points="0,-112 97,-56 42,-24 -24,-62" fill="url(#bladeA)" stroke="#0F172A" stroke-width="5" stroke-linejoin="round" transform="rotate(240)"/>
+    <polygon points="0,-112 97,-56 42,-24 -24,-62" fill="url(#bladeB)" stroke="#0F172A" stroke-width="5" stroke-linejoin="round" transform="rotate(300)"/>
+    <circle cx="0" cy="0" r="38" fill="#0F172A" stroke="#38BDF8" stroke-width="5"/>
+    <circle cx="0" cy="0" r="22" fill="url(#irisCore)"/>
+  </g>
+</svg>

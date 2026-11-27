@@ -1,3 +1,5 @@
+![AI Photo Defense](assets/branding/github-banner.svg)
+
 # AI Photo Defense
 
 Offline, Rust-native privacy workstation for photographs and other finished media: professional photo editing and colour correction, local Privacy Scan, permanent redaction, verified export, audio/video/subtitle metadata inspection and removal, spoken-content muting, diagnostics and crash recovery, plus an experimental adversarial-defense research bench. Development preview, not a validated protection product.
