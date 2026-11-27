@@ -213,6 +213,22 @@ enum Command {
         #[arg(long)]
         redact_to: Option<PathBuf>,
     },
+    /// Detect assistant wake phrases (Siri, Google, Alexa, Meta, Bixby, custom) with local Whisper and mute/suppress them.
+    #[cfg(feature = "stt")]
+    #[command(name = "voice-safe-playback")]
+    VoiceSafePlayback {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long)]
+        model: PathBuf,
+        /// Suppression mode: mute, bleep, or experimental-band.
+        #[arg(long, default_value = "mute")]
+        mode: String,
+        /// Comma-separated custom wake phrases.
+        #[arg(long, default_value = "")]
+        custom: String,
+    },
     /// Scan SRT/WebVTT subtitles for private information; optionally write a redacted copy.
     Subtitles {
         input: PathBuf,
@@ -804,6 +820,39 @@ fn main() -> Result<()> {
                 "export": export,
             });
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        #[cfg(feature = "stt")]
+        Command::VoiceSafePlayback {
+            input,
+            output,
+            model,
+            mode,
+            custom,
+        } => {
+            let supp_mode = match mode.to_ascii_lowercase().as_str() {
+                "mute" => photo_media::wake_word::SuppressionMode::Mute,
+                "bleep" => photo_media::wake_word::SuppressionMode::Bleep,
+                "experimental-band" => {
+                    photo_media::wake_word::SuppressionMode::ExperimentalBandSuppress
+                }
+                other => anyhow::bail!(
+                    "Unknown mode '{other}'; expected mute, bleep, or experimental-band"
+                ),
+            };
+            let custom_phrases: Vec<String> = custom
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let hits = photo_media::wake_word::detect_wake_phrases_with_whisper(
+                &input,
+                &model,
+                &photo_media::wake_word::AssistantKind::BUILTINS,
+                &custom_phrases,
+            )?;
+            let rep =
+                photo_media::wake_word::apply_safe_playback(&input, &output, &hits, supp_mode)?;
+            println!("{}", serde_json::to_string_pretty(&rep)?);
         }
         Command::Subtitles { input, redact_to } => {
             let b = read_media(&input)?;

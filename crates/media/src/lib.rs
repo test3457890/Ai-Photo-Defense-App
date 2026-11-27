@@ -23,6 +23,7 @@ pub mod protect;
 pub mod stt;
 pub mod subtitles;
 pub mod temporal;
+pub mod wake_word;
 
 pub use detect::{MediaKind, detect};
 
