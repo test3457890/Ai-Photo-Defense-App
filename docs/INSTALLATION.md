@@ -9,7 +9,7 @@ This is a source-build development preview. No signed installers or verified pub
 | macOS Apple Silicon | aarch64-apple-darwin | CI Apple Silicon target build passed; Mac GUI runtime smoke and notarization pending |
 | Linux x64 | x86_64-unknown-linux-gnu | CI and local builds passed; native preview/export/lab checked; broader desktop coverage pending |
 
-Install the Rust toolchain through rustup. `rust-toolchain.toml` selects the exact version. Windows requires Visual Studio Build Tools with Desktop development with C++; macOS requires Xcode command line tools. Linux requires a C linker, X11 or Wayland desktop libraries, a usable system font, an xdg-desktop-portal backend for rfd dialogs, and ALSA development headers for local audio playback (Debian/Ubuntu: `sudo apt-get install libasound2-dev pkg-config`). A headless shell can run the CLI but cannot directly start a graphical window without a desktop display.
+Install the Rust toolchain through rustup. `rust-toolchain.toml` selects the exact version. Windows requires Visual Studio Build Tools with Desktop development with C++; macOS requires Xcode command line tools. Linux requires a C linker, X11 or Wayland desktop libraries, a usable system font, an xdg-desktop-portal backend for rfd dialogs, and ALSA development headers for local audio playback (Debian/Ubuntu: `sudo apt-get install libasound2-dev pkg-config`). At run time the window needs libxkbcommon-x11 (Debian/Ubuntu: `libxkbcommon-x11-0`), which minimal installations may lack; the .deb package declares it. A headless shell can run the CLI but cannot directly start a graphical window without a desktop display.
 
 ```sh
 cargo build --locked -p photo-cli
@@ -26,3 +26,11 @@ cargo build --locked -p photo-cli --features experimental-clip
 ```
 
 Read [the experimental model guide](EXPERIMENTAL_CLIP.md) before using it. No model is bundled. Do not download untrusted executable model formats or treat a matching user-provided checksum as proof of publisher identity.
+
+## Unsigned CI installer artifacts
+
+`.github/workflows/release.yml` (triggered by `v*` tags or manual `workflow_dispatch`, without publishing GitHub Releases) builds unsigned preview installer artifacts with `SHA256SUMS.txt`, `LICENSE`, `THIRD_PARTY.md`, `PRIVACY.md`, and a CycloneDX SBOM (`scripts/sbom.py`):
+
+- **Windows x64**: `.msi` (`cargo-wix` + `packaging/wix/main.wxs`). Unsigned builds trigger Windows SmartScreen warnings until code-signed.
+- **Linux x64**: `.deb` (`cargo-deb`) and `.AppImage` (`appimagetool`). Verify `SHA256SUMS.txt` with `sha256sum -c SHA256SUMS.txt`.
+- **macOS (Intel x64 & Apple Silicon arm64)**: `.dmg` containing `AI Photo Defense.app`. Unsigned and un-notarized builds trigger macOS Gatekeeper warnings until signed and notarized.

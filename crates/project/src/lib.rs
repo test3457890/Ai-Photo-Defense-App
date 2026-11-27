@@ -37,6 +37,17 @@ pub struct Settings {
     pub format: String,
     pub quality: u8,
     pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_model_dir: Option<String>,
+    pub face_model_path: Option<String>,
+    pub c2pa_cert_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub c2pa_key_path: Option<String>,
+    #[serde(default = "default_ui_scale")]
+    pub ui_scale: f64,
+}
+fn default_ui_scale() -> f64 {
+    1.0
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -45,6 +56,11 @@ impl Default for Settings {
             format: "png".into(),
             quality: 92,
             mode: "Professional".into(),
+            voice_model_dir: None,
+            face_model_path: None,
+            c2pa_cert_path: None,
+            c2pa_key_path: None,
+            ui_scale: 1.0,
         }
     }
 }

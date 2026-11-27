@@ -379,6 +379,7 @@ pub enum Message {
     MenuClose,
     Mode(Mode),
     Appearance(theme::Appearance),
+    UiScale(f64),
     Fullscreen(bool),
     Group(&'static str),
     OpenDialog,
@@ -497,6 +498,17 @@ pub enum Message {
     Play(usize, bool),
     PlayReady(Result<Pcm, String>, f32),
     StopAudio,
+    ChooseC2paCert,
+    C2paCertChosen(Option<PathBuf>),
+    ChooseC2paKey,
+    C2paKeyChosen(Option<PathBuf>),
+    ChooseVoiceModelFolder,
+    VoiceModelFolderChosen(Option<PathBuf>),
+    ProtectVoice,
+    ChooseFaceModel,
+    FaceModelChosen(Option<PathBuf>),
+    SelectFace(photo_privacy::Rect),
+    SelectAllFaces,
     PaneResized(pane_grid::ResizeEvent),
     PaneDragged(pane_grid::DragEvent),
     PaneMaximize(Pane),
@@ -506,6 +518,7 @@ pub enum Message {
 pub struct App {
     pub mode: Mode,
     pub appearance: theme::Appearance,
+    pub ui_scale: f64,
     pub menu: Option<Menu>,
     pub fullscreen: bool,
     pub panes: pane_grid::State<Pane>,
@@ -567,6 +580,8 @@ pub struct App {
     pub forensics: Option<Box<photo_privacy::forensics::ForensicReport>>,
     pub perf: Perf,
     pub sys: Option<sysinfo::System>,
+    pub c2pa_cert_path: Option<PathBuf>,
+    pub c2pa_key_path: Option<PathBuf>,
     pub media: Vec<MediaEntry>,
     pub selected_media: Option<usize>,
     pub focus_media: bool,
@@ -574,6 +589,8 @@ pub struct App {
     pub seg_end: String,
     pub player: Option<Player>,
     pub playing: Option<(usize, bool)>,
+    pub voice_model_dir: Option<PathBuf>,
+    pub face_model_path: Option<PathBuf>,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -728,6 +745,78 @@ fn set_field(a: &mut Adjustments, f: Field, band: usize, v: f32) {
     }
 }
 
+#[cfg(feature = "faces")]
+fn scan_with_optional_faces(
+    photo: &photo_core::Photo,
+    profile: &photo_privacy::Profile,
+    face_model: Option<&Path>,
+) -> Result<ScanReport, String> {
+    let face_regions = if let Some(mp) = face_model {
+        let det = photo_privacy::faces::FaceDetector::load(mp).map_err(|e| format!("{e:#}"))?;
+        let boxes = det
+            .detect(&photo.pixels, 0.7, 0.35)
+            .map_err(|e| format!("{e:#}"))?;
+        Some(boxes)
+    } else {
+        None
+    };
+    Ok(photo_privacy::scan_with_faces(
+        photo_privacy::ScanInput {
+            bytes: &photo.bytes,
+            pixels: &photo.pixels,
+            ocr_text: None,
+            extra_text: vec![],
+        },
+        profile,
+        face_regions.as_deref(),
+    ))
+}
+
+#[cfg(not(feature = "faces"))]
+fn scan_with_optional_faces(
+    photo: &photo_core::Photo,
+    profile: &photo_privacy::Profile,
+    _face_model: Option<&Path>,
+) -> Result<ScanReport, String> {
+    Ok(photo_pipeline::scan_photo(photo, profile))
+}
+
+#[cfg(feature = "c2pa")]
+fn sign_exported_c2pa(
+    saved: &Path,
+    edits: &EditStack,
+    cert_path: &Path,
+    key_path: &Path,
+) -> anyhow::Result<()> {
+    let cert_pem = std::fs::read(cert_path)?;
+    let key_pem = std::fs::read(key_path)?;
+    let bytes = std::fs::read(saved)?;
+    let mut actions = vec!["c2pa.metadata_removed"];
+    if edits
+        .active()
+        .iter()
+        .any(|op| matches!(op, Operation::Crop(_) | Operation::CropAspect(_)))
+    {
+        actions.push("c2pa.cropped");
+    }
+    if edits.active().iter().any(|op| op.is_secure_redaction()) {
+        actions.push("c2pa.redacted");
+    }
+    let signed = photo_privacy::c2pa_cred::sign_bytes(&bytes, &cert_pem, &key_pem, &actions)?;
+    std::fs::write(saved, signed)?;
+    Ok(())
+}
+
+#[cfg(not(feature = "c2pa"))]
+fn sign_exported_c2pa(
+    _saved: &Path,
+    _edits: &EditStack,
+    _cert_path: &Path,
+    _key_path: &Path,
+) -> anyhow::Result<()> {
+    anyhow::bail!("Built without the `c2pa` feature; rebuild with `--features c2pa`.")
+}
+
 /// Background media inspection: bounded read, content detection, structure, audio analysis.
 fn load_media(path: &Path) -> MediaLoad {
     let mut l = MediaLoad {
@@ -812,6 +901,50 @@ fn unique_out(dir: &Path, stem: &str, ext: &str) -> PathBuf {
         })
         .find(|p| !p.exists())
         .unwrap_or_else(|| dir.join(format!("{stem}-private-x.{ext}")))
+}
+
+#[cfg(feature = "voice-protect")]
+fn protect_voice_media(
+    path: &Path,
+    out_dir: &Path,
+    model_dir: &Path,
+) -> anyhow::Result<(
+    PathBuf,
+    String,
+    Option<photo_media::audio::Comparison>,
+    Option<f64>,
+)> {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("audio");
+    let out = unique_out(out_dir, &format!("{stem}-protected"), "wav");
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let r = photo_media::ecapa::protect_wav(
+        path,
+        &out,
+        model_dir,
+        photo_media::protect::Settings::default(),
+        &cancel,
+    )?;
+    let cmp = photo_media::audio::compare(path, &out).ok();
+    let lufs = photo_media::audio::analyze(&out)
+        .ok()
+        .and_then(|a| a.integrated_lufs);
+    Ok((out, serde_json::to_string_pretty(&r)?, cmp, lufs))
+}
+
+#[cfg(not(feature = "voice-protect"))]
+fn protect_voice_media(
+    _path: &Path,
+    _out_dir: &Path,
+    _model_dir: &Path,
+) -> anyhow::Result<(
+    PathBuf,
+    String,
+    Option<photo_media::audio::Comparison>,
+    Option<f64>,
+)> {
+    anyhow::bail!(
+        "Built without the `voice-protect` feature; rebuild with `--features voice-protect`."
+    )
 }
 
 /// Exports a media file through the matching verified path. Never overwrites.
@@ -1018,6 +1151,7 @@ impl App {
         let mut app = Self {
             mode: Mode::Professional,
             appearance: theme::Appearance::Graphite,
+            ui_scale: 1.0,
             menu: None,
             fullscreen: false,
             panes: default_panes(),
@@ -1060,6 +1194,8 @@ impl App {
             lens: 0.,
             band: 0,
             active_layer: None,
+            c2pa_cert_path: None,
+            c2pa_key_path: None,
             editing: false,
             profile: "Social Media".into(),
             focused_finding: None,
@@ -1104,6 +1240,8 @@ impl App {
             seg_end: String::new(),
             player: None,
             playing: None,
+            voice_model_dir: None,
+            face_model_path: None,
         };
         app.refresh_library();
         app
@@ -1326,6 +1464,23 @@ impl App {
                 format: self.format.extension().into(),
                 quality: self.quality,
                 mode: self.mode.to_string(),
+                voice_model_dir: self
+                    .voice_model_dir
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
+                face_model_path: self
+                    .face_model_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
+                c2pa_cert_path: self
+                    .c2pa_cert_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
+                c2pa_key_path: self
+                    .c2pa_key_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
+                ui_scale: self.ui_scale,
             },
             ..Default::default()
         }
@@ -1378,6 +1533,10 @@ impl App {
             }
             Message::Appearance(a) => {
                 self.appearance = a;
+                self.menu = None;
+            }
+            Message::UiScale(s) => {
+                self.ui_scale = s.clamp(0.85, 2.0);
                 self.menu = None;
             }
             Message::Fullscreen(f) => {
@@ -2140,6 +2299,7 @@ impl App {
                     .collect();
                 return Task::batch(jobs.into_iter().map(|(k, path, edits, generation)| {
                     let profile = profile.clone();
+                    let face_model = self.face_model_path.clone();
                     Task::perform(
                         async move {
                             tokio::task::spawn_blocking(
@@ -2150,10 +2310,12 @@ impl App {
                                     let pixels =
                                         edits.render(&p.pixels).map_err(|e| format!("{e:#}"))?;
                                     let dims = (pixels.width(), pixels.height());
-                                    let r = photo_pipeline::scan_photo(
-                                        &p.with_pixels(pixels),
+                                    let photo = p.with_pixels(pixels);
+                                    let r = scan_with_optional_faces(
+                                        &photo,
                                         &profile,
-                                    );
+                                        face_model.as_deref(),
+                                    )?;
                                     photo_log::event(
                                         Level::Info,
                                         Component::Privacy,
@@ -2752,6 +2914,156 @@ impl App {
                 }
                 self.playing = None;
             }
+            Message::ChooseVoiceModelFolder => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .pick_folder()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::VoiceModelFolderChosen,
+                );
+            }
+            Message::VoiceModelFolderChosen(Some(dir)) => {
+                self.voice_model_dir = Some(dir);
+                self.dirty_project = true;
+            }
+            Message::VoiceModelFolderChosen(None) => {}
+            Message::ProtectVoice => {
+                let Some(i) = self.selected_media else {
+                    return Task::none();
+                };
+                let Some(model_dir) = self.voice_model_dir.clone() else {
+                    self.note("Choose a voice model folder in Technical > Model Library first.");
+                    return Task::none();
+                };
+                let dir = PathBuf::from(self.output_dir.trim());
+                if self.output_dir.trim().is_empty() || !dir.is_dir() {
+                    self.note("Choose an existing output folder first.");
+                    return self.update(Message::BrowseOutput);
+                }
+                let path = self.media[i].path.clone();
+                self.media[i].status = "Protecting voice".into();
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            protect_voice_media(&path, &dir, &model_dir)
+                                .map_err(|e| format!("{e:#}"))
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    move |r| Message::MediaExported(i, r),
+                );
+            }
+            Message::ChooseFaceModel => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("ONNX model", &["onnx"])
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::FaceModelChosen,
+                );
+            }
+            Message::FaceModelChosen(Some(p)) => {
+                self.face_model_path = Some(p);
+                self.dirty_project = true;
+            }
+            Message::FaceModelChosen(None) => {}
+            Message::SelectFace(r) => {
+                self.tool = Tool::Rect;
+                self.selection = Some(Selection::Rect(photo_edit::Rect {
+                    x: r.x,
+                    y: r.y,
+                    width: r.width,
+                    height: r.height,
+                }));
+            }
+            Message::SelectAllFaces => {
+                let Some(i) = self.selected else {
+                    return Task::none();
+                };
+                let faces: Vec<photo_privacy::Finding> = {
+                    let Some(s) = self.entries[i].scan.as_mut() else {
+                        return Task::none();
+                    };
+                    for (f, d) in s.report.findings.iter().zip(&mut s.dismissed) {
+                        if f.category == photo_privacy::Category::Face && f.region.is_some() {
+                            *d = false;
+                        }
+                    }
+                    s.report
+                        .findings
+                        .iter()
+                        .filter(|f| {
+                            f.category == photo_privacy::Category::Face && f.region.is_some()
+                        })
+                        .cloned()
+                        .collect()
+                };
+                if faces.len() == 1
+                    && let Some(r) = faces[0].region
+                {
+                    self.tool = Tool::Rect;
+                    self.selection = Some(Selection::Rect(photo_edit::Rect {
+                        x: r.x,
+                        y: r.y,
+                        width: r.width,
+                        height: r.height,
+                    }));
+                } else if !faces.is_empty() {
+                    let pref = match self.method {
+                        Method::White => photo_privacy::profiles::RedactionPreference::OpaqueWhite,
+                        Method::Blur => photo_privacy::profiles::RedactionPreference::Blur,
+                        Method::Pixelate | Method::Mosaic => {
+                            photo_privacy::profiles::RedactionPreference::Pixelate
+                        }
+                        Method::Black => photo_privacy::profiles::RedactionPreference::OpaqueBlack,
+                    };
+                    if let Some(op) = photo_pipeline::conceal_findings(&faces, pref, 4) {
+                        self.note(format!("Applied redaction to {} face(s).", faces.len()));
+                        return self.update(Message::Apply(op));
+                    }
+                }
+            }
+            Message::ChooseC2paCert => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("PEM certificate", &["pem", "crt", "cer"])
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::C2paCertChosen,
+                );
+            }
+            Message::C2paCertChosen(Some(p)) => {
+                self.c2pa_cert_path = Some(p);
+                self.dirty_project = true;
+            }
+            Message::C2paCertChosen(None) => {}
+            Message::ChooseC2paKey => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("PEM private key", &["pem", "key"])
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::C2paKeyChosen,
+                );
+            }
+            Message::C2paKeyChosen(Some(p)) => {
+                self.c2pa_key_path = Some(p);
+                self.dirty_project = true;
+            }
+            Message::C2paKeyChosen(None) => {}
             Message::PaneResized(e) => self.panes.resize(e.split, e.ratio),
             Message::PaneDragged(pane_grid::DragEvent::Dropped { pane, target }) => {
                 self.panes.drop(pane, target)
@@ -2804,6 +3116,10 @@ impl App {
         self.selected = None;
         self.profile = p.settings.profile.clone();
         self.quality = p.settings.quality;
+        self.c2pa_cert_path = p.settings.c2pa_cert_path.as_ref().map(PathBuf::from);
+        self.c2pa_key_path = p.settings.c2pa_key_path.as_ref().map(PathBuf::from);
+        self.voice_model_dir = p.settings.voice_model_dir.as_ref().map(PathBuf::from);
+        self.face_model_path = p.settings.face_model_path.as_ref().map(PathBuf::from);
         self.pending_restore = Some(p);
         if missing > 0 {
             photo_log::warn(
@@ -2838,6 +3154,7 @@ impl App {
         let (f, q) = (self.format, self.quality);
         let profile = profile_by_name(&self.profile);
         let (high, auto) = (self.high_assurance, self.auto_redact);
+        let c2pa_creds = self.c2pa_cert_path.clone().zip(self.c2pa_key_path.clone());
         let aspect = if self.mode == Mode::Essential {
             self.essential_aspect
         } else {
@@ -2915,6 +3232,9 @@ impl App {
                                 return Ok(ExportState::Blocked(w));
                             }
                             let saved = photo_pipeline::publish(&prepared, &path, &dir, f, accept)?;
+                            if let Some((cert_p, key_p)) = &c2pa_creds {
+                                sign_exported_c2pa(&saved.image, &edits, cert_p, key_p)?;
+                            }
                             photo_log::event(
                                 Level::Info,
                                 Component::Export,
@@ -3119,6 +3439,14 @@ impl App {
     }
 }
 
+fn load_app_icon() -> Option<window::Icon> {
+    let bytes = include_bytes!("../../../assets/icons/icon-64.png");
+    let (img, _) = photo_core::decode_bounded(bytes).ok()?;
+    let rgba = img.into_rgba8();
+    let (w, h) = rgba.dimensions();
+    window::icon::from_rgba(rgba.into_raw(), w, h).ok()
+}
+
 pub fn run() -> iced::Result {
     let mut args = std::env::args_os().skip(1);
     let mut paths = vec![];
@@ -3143,6 +3471,7 @@ pub fn run() -> iced::Result {
     iced::application("AI Photo Defense", App::update, views::view)
         .subscription(App::subscription)
         .theme(|a: &App| theme::theme(a.appearance))
+        .scale_factor(|a: &App| a.ui_scale)
         .default_font(iced::Font::with_name(if cfg!(target_os = "windows") {
             "Segoe UI"
         } else if cfg!(target_os = "macos") {
@@ -3153,6 +3482,7 @@ pub fn run() -> iced::Result {
         .window(window::Settings {
             size: iced::Size::new(1280., 760.),
             min_size: Some(iced::Size::new(900., 560.)),
+            icon: load_app_icon(),
             exit_on_close_request: false,
             ..Default::default()
         })

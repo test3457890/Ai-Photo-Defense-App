@@ -1,8 +1,22 @@
 # Changelog
 
+## 0.6.0 (unreleased)
+
+Integration of Antigravity's Part 5 branches, reviewed and verified by Claude. Heavy additions are optional cargo features; release installers include `faces` and `c2pa`.
+
+- Face detection (`faces`): pure-Rust `tract-onnx` running UltraFace RFB-320 (MIT), chosen by the user as a local `.onnx` file. Privacy Scan reports face regions; Professional mode "Select all faces". Checked on public-domain photographs: 1 of 1 and 3 of 3 faces found, none on a synthetic landscape. No precision/recall figure: no labelled dataset was used.
+- C2PA content credentials (`c2pa`): inspection in Forensic Inspection and optional ES256 signing of exports with a certificate you provide. `RUSTSEC-2023-0071` (rsa, via c2pa) is ignored in deny.toml and .cargo/audit.toml because only ECDSA is used.
+- Voice protection (`voice-protect`, experimental, not in installers): Rust ECAPA-TDNN speaker encoder for the audio protection engine, an offline SafeTensors converter and a "Protect voice" control. Parity with SpeechBrain and any protection effect are **not measured**.
+- Voice-assistant safe playback (`voice-safe-playback` CLI, needs `stt`): finds wake words in a transcript and mutes or bleeps them. Not tested against real assistant devices.
+- Optional Ask AI (`ask-ai`, models crate only): licence-approved model list and a loopback-only local Ollama client, refused unless enabled; responses capped at 4 MiB. View > Scale 100/125/150 %.
+- Unsigned installers workflow (MSI, .deb, AppImage, .dmg, checksums, SBOM) with pinned tool versions and a checksum-verified appimagetool; GUI smoke tests on Linux and macOS in CI; original logo and app icons.
+- Desktop shows optional-feature controls only when the feature is built in.
+
+Not merged: H.264 video frames, video tracking and Opus decoding. They depend on `filmcraft-*` crates published by an account with no verifiable link to the FilmCraft project; they will be ported to the official `storytold/craft-libs` before merging.
+
 ## 0.5.0 release candidate (Part 5), 2026-11-26
 
-Refinement and validation pass over Parts 1 to 4. Fixed: text fields painted their text outside the box (a clip widget now confines every field). Added: live and export-time warnings for weak blur or pixelation, backed by a test showing small radii and blocks leave text structure; AIFF, CAF, MP1/MP2 and ADPCM audio decoding; an invisible key-based ownership watermark with CLI `watermark-embed` / `watermark-detect` (survives JPEG quality 70+, not resizing; provenance only, not AI protection). Removed an unused dependency. Research register extended with a licence check of 25 projects: SpeechBrain ECAPA and Resemblyzer (Apache-2.0) and Whisper (MIT) make voice protection and spoken-content detection licence-feasible; FaceShield is research-only and Glaze/Nightshade are closed. Master requirements checklist for Parts 1 to 5 in IMPLEMENTATION_MATRIX.md.
+Refinement and validation pass over Parts 1 to 4. Fixed: text fields painted their text outside the box (a clip widget now confines every field). Added: live and export-time warnings for weak blur or pixelation, backed by a test showing small radii and blocks leave text structure; AIFF, CAF, MP1/MP2 and ADPCM audio decoding; an invisible key-based ownership watermark with CLI `watermark-embed` / `watermark-detect` (survives JPEG quality 70+, not resizing; provenance only, not AI protection); unsigned cross-platform installer workflow (`.github/workflows/release.yml`: Windows MSI, Linux `.deb` + AppImage, macOS `.dmg`, SHA-256 checksums, CycloneDX SBOM, no release published). Removed an unused dependency. Research register extended with a licence check of 25 projects: SpeechBrain ECAPA and Resemblyzer (Apache-2.0) and Whisper (MIT) make voice protection and spoken-content detection licence-feasible; FaceShield is research-only and Glaze/Nightshade are closed. Master requirements checklist for Parts 1 to 5 in IMPLEMENTATION_MATRIX.md.
 
 ## 0.4.0 development preview (Part 4), 2026-11-26
 

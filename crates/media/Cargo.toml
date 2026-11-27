@@ -14,6 +14,7 @@ serde_json.workspace = true
 tempfile.workspace = true
 photo-privacy.workspace = true
 photo-log.workspace = true
+photo-models = { workspace = true, optional = true }
 # Pure-Rust audio demuxing and decoding (MPL-2.0, used unmodified as a library).
 symphonia = { version = "0.5", default-features = false, features = ["aac", "adpcm", "aiff", "alac", "caf", "flac", "isomp4", "mkv", "mp1", "mp2", "mp3", "ogg", "pcm", "vorbis", "wav"] }
 hound = "3.5"
@@ -27,6 +28,7 @@ tokenizers = { version = "0.23", default-features = false, features = ["fancy-re
 [features]
 default = []
 stt = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers"]
+voice-protect = ["dep:candle-core", "dep:candle-nn", "dep:photo-models"]
 
 [dev-dependencies]
 image.workspace = true

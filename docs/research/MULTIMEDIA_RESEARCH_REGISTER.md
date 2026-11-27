@@ -18,6 +18,7 @@ effectiveness number from any paper is reported as a property of this applicatio
 | hound | Apache-2.0 | WAV writer | **Yes** | Export container |
 | ebur128 | MIT | EBU R128 loudness, true peak, LRA | **Yes** | Loudness matching and analysis |
 | rustfft | MIT OR Apache-2.0 | FFT | **Yes** | Spectrogram and protection engine STFT |
+| c2pa (contentauth/c2pa-rs) | MIT OR Apache-2.0 (crate metadata, cargo-deny) | C2PA Content Credentials reader/builder (`0.92.3`, `rust_native_crypto` + `file_io`, no OpenSSL/HTTP) | **Yes**, optional `c2pa` feature (off by default) | Inspects embedded C2PA manifests and signs exports with a user-supplied PEM certificate chain and private key |
 | FilmCraft (storytold/filmcraft) | MIT OR Apache-2.0 (**verified**, README badge and licence files) | Open-source non-linear video editor in pure Rust. README states its video codecs, AAC, Opus and containers are its own Rust code (FFmpeg only as a test oracle). Codec table: H.264 decode and encode (Baseline/Main/High); HEVC decode (Main, Main 10), HEVC export only through hardware encoders; AV1 decode only | No | **Leading candidate for Part 4C video decode/encode** because it is Rust-native and permissively licensed. Not integrated: its codecs must first be reviewed for security (untrusted bitstreams), correctness, performance and patent exposure (H.264/HEVC are patent-encumbered regardless of code licence). Its editor, timeline and UI must not be imported (spec section 10) |
 | FFmpeg | LGPL-2.1+ or GPL depending on build | C media framework | No | Would add a non-Rust runtime dependency and licence/patent obligations; kept as a possible external test oracle only |
 | gstreamer-rs | MIT/Apache bindings over LGPL GStreamer | Bindings | No | Same concern as FFmpeg: large native runtime |
@@ -75,7 +76,7 @@ Read from each project's official page, repository, model card or paper by the G
 | DiffusionGuard (ICLR 2025) | - | uses Stable Diffusion inpainting | |
 | Fawkes (USENIX Security 2020) | BSD-3-Clause ("personal privacy or academic research") | - | TensorFlow |
 | Glaze, Nightshade | closed source | not distributed | cannot be integrated |
-| **SpeechBrain ECAPA-TDNN** (spkrec-ecapa-voxceleb) | **Apache-2.0** | **Apache-2.0** (Hugging Face) | **licence-compatible speaker encoder** for a voice-protection objective; weights are a PyTorch checkpoint and would need conversion to SafeTensors |
+| **SpeechBrain ECAPA-TDNN** (spkrec-ecapa-voxceleb) | **Apache-2.0** | **Apache-2.0** (Hugging Face) | **Implemented behind `voice-protect`** (`crates/media/src/ecapa.rs`, offline converter `tools/convert_ecapa.py`); parity and external cloner transfer remain unverified until run against converted weights |
 | WavLM base-plus-sv | CC-BY-SA-3.0 | CC-BY-SA-3.0 | share-alike obligations |
 | Resemblyzer (GE2E) | Apache-2.0 | Apache-2.0 (in repo) | second licence-compatible speaker encoder |
 | **OpenAI Whisper** | **MIT** | **MIT** | **licence-compatible speech-to-text** for detecting spoken names and numbers; candle (already a dependency) has a Rust Whisper implementation |
@@ -84,6 +85,8 @@ Read from each project's official page, repository, model card or paper by the G
 | MediaInfoLib | BSD-2-Clause | - | C++ |
 | avio | MIT OR Apache-2.0 | - | wraps FFmpeg (LGPL/GPL inherited) |
 | Symphonia AIFF | MPL-2.0 | - | `aiff` feature since 0.5.4: **now enabled** |
+| **UltraFace RFB-320** (`Linzaer/Ultra-Light-Fast-Generic-Face-Detector-1MB`) | **MIT** (GitHub repo, code & `.onnx` weights) | Lightweight `1x3x240x320` face detector | **Yes** (behind `faces` feature via `tract-onnx` 0.23.10, `MIT OR Apache-2.0`) | User supplies local `.onnx` (+ optional schema-2 `manifest.json`). Precision/recall unverified without local weights |
+| **YuNet** (`opencv/opencv_zoo` `face_detection_yunet`) | **Apache-2.0** (OpenCV Zoo) / **MIT** (`libfacedetection.train`) | Dynamic-shape ONNX face detector | No | Candidate alternative; UltraFace RFB-320 selected for fixed `1x3x240x320` `tract-onnx` compatibility |
 
 Consequence: voice-cloning protection and spoken-content detection are no longer blocked by licensing. They are blocked by implementation and validation work: porting ECAPA-TDNN (or GE2E) and Whisper to candle, converting weights, and measuring against real cloning systems with a De-AntiFake purification test. Antigravity's raw notes are not committed.
 

@@ -343,6 +343,9 @@ fn menu_popup(app: &App, m: Menu) -> El<'_> {
                     "",
                     Some(Message::Appearance(theme::Appearance::Paper)),
                 ),
+                item("Scale 100%", "", Some(Message::UiScale(1.0))),
+                item("Scale 125%", "", Some(Message::UiScale(1.25))),
+                item("Scale 150%", "", Some(Message::UiScale(1.5))),
             ],
         ),
         Menu::Help => (
@@ -452,7 +455,6 @@ fn essential(app: &App) -> El<'_> {
             .on_toggle(Message::AutoRedact)
             .size(14)
             .text_size(FONT),
-        horizontal_space(),
         pick_list(
             photo_core::ExportFormat::ALL,
             Some(app.format),
@@ -482,7 +484,9 @@ fn essential(app: &App) -> El<'_> {
             ),
     ]
     .spacing(6)
-    .align_y(Alignment::Center);
+    .align_y(Alignment::Center)
+    // Wraps in narrow windows instead of squeezing controls.
+    .wrap();
     let header = row![
         small("").width(18),
         small("File").width(Length::FillPortion(4)),
@@ -838,8 +842,11 @@ fn library(app: &App) -> El<'_> {
 }
 
 fn tool_bar(app: &App) -> El<'_> {
-    let tools = Tool::ALL.iter().fold(row![].spacing(2), |r, tl| {
-        r.push(
+    // One flat row that wraps onto further lines in narrow windows instead of squeezing buttons to
+    // zero width (which also tripped a debug assertion in the tiny-skia renderer).
+    let mut items: Vec<El> = Tool::ALL
+        .iter()
+        .map(|tl| {
             button(text(tl.label()).size(FONT_SMALL))
                 .padding([3, 7])
                 .style(if app.tool == *tl {
@@ -847,37 +854,25 @@ fn tool_bar(app: &App) -> El<'_> {
                 } else {
                     theme::tool
                 })
-                .on_press(Message::Tool(*tl)),
-        )
-    });
-    let views = row![
-        toggle(
-            "Edited",
-            app.view == ViewMode::Edited,
-            Message::View(ViewMode::Edited)
-        ),
-        toggle(
-            "Before",
-            app.view == ViewMode::Before,
-            Message::View(ViewMode::Before)
-        ),
-        toggle(
-            "Split",
-            app.view == ViewMode::Split,
-            Message::View(ViewMode::Split)
-        ),
-    ]
-    .spacing(2);
-    let main = row![
-        tools,
-        sep(),
-        views,
-        sep(),
-        toggle("Clip", app.clipping, Message::Clipping),
-        toggle("Thirds", app.thirds, Message::Thirds)
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center);
+                .on_press(Message::Tool(*tl))
+                .into()
+        })
+        .collect();
+    items.push(sep());
+    for (label, mode) in [
+        ("Edited", ViewMode::Edited),
+        ("Before", ViewMode::Before),
+        ("Split", ViewMode::Split),
+    ] {
+        items.push(toggle(label, app.view == mode, Message::View(mode)).into());
+    }
+    items.push(sep());
+    items.push(toggle("Clip", app.clipping, Message::Clipping).into());
+    items.push(toggle("Thirds", app.thirds, Message::Thirds).into());
+    let main = iced::widget::Row::with_children(items)
+        .spacing(3)
+        .align_y(Alignment::Center)
+        .wrap();
     let mut col = column![main].spacing(4);
     if app.selection.is_some() || !app.points.is_empty() || app.gradient.is_some() {
         let mut r = row![small(match app.tool {
@@ -1665,7 +1660,7 @@ fn privacy_panel(app: &App) -> El<'_> {
             .into();
     };
     let finding = |k: usize, f: &photo_privacy::Finding, d: bool| -> El {
-        row![
+        let mut r = row![
             button(column![
                 small(format!("{:?}", f.category)),
                 small(f.description.clone())
@@ -1678,12 +1673,19 @@ fn privacy_panel(app: &App) -> El<'_> {
                 theme::flat
             })
             .on_press(Message::FocusFinding(k)),
+        ]
+        .spacing(2)
+        .align_y(Alignment::Center);
+        if f.category == photo_privacy::Category::Face
+            && let Some(reg) = f.region
+        {
+            r = r.push(btn("Select", Some(Message::SelectFace(reg))));
+        }
+        r.push(
             checkbox("", d)
                 .on_toggle(move |v| Message::Dismiss(k, v))
                 .size(13),
-        ]
-        .spacing(2)
-        .align_y(Alignment::Center)
+        )
         .into()
     };
     let (mut certain, mut uncertain) = (Column::new().spacing(1), Column::new().spacing(1));
@@ -1702,12 +1704,21 @@ fn privacy_panel(app: &App) -> El<'_> {
         .push(certain)
         .push(small(format!("UNCERTAIN ({nu})")))
         .push(uncertain);
+    let has_faces = s
+        .report
+        .findings
+        .iter()
+        .any(|f| f.category == photo_privacy::Category::Face && f.region.is_some());
     c = c.push(
         row![
             pick_list(Method::ALL, Some(app.method), Message::Method)
                 .text_size(FONT)
                 .padding([2, 6]),
-            btn("Conceal located", Some(Message::ConcealFindings))
+            btn("Conceal located", Some(Message::ConcealFindings)),
+            btn(
+                "Select all faces",
+                has_faces.then_some(Message::SelectAllFaces)
+            ),
         ]
         .spacing(4),
     );
@@ -1829,7 +1840,7 @@ fn technical(app: &App) -> El<'_> {
         TechPage::Validation => validation(app),
         TechPage::Forensics => forensics(app),
         TechPage::Lab => lab(app),
-        TechPage::Models => models(),
+        TechPage::Models => models(app),
         TechPage::History => history(app),
         TechPage::Formats => formats(app),
     };
@@ -1880,7 +1891,6 @@ fn diagnostics(app: &App) -> El<'_> {
                 .style(theme::input)
         )
         .width(260),
-        horizontal_space(),
         btn("Copy report", Some(Message::CopyReport)),
         toggle(
             "Preview report",
@@ -1894,7 +1904,9 @@ fn diagnostics(app: &App) -> El<'_> {
             .on_press(Message::ClearLogs),
     ]
     .spacing(6)
-    .align_y(Alignment::Center);
+    .align_y(Alignment::Center)
+    // Wraps in narrow windows instead of squeezing controls.
+    .wrap();
     let header = row![
         small("Time (UTC ms)").width(120),
         small("Level").width(70),
@@ -2460,7 +2472,23 @@ fn media_panel<'a>(app: &'a App, m: &'a MediaEntry, compact: bool) -> El<'a> {
         .spacing(8)
         .align_y(Alignment::Center),
     );
-    c = c.push(small("AI voice / video protection: unavailable. No validated model is installed, so no adversarial changes are made and none are claimed."));
+    if info.kind == MediaKind::Audio && cfg!(feature = "voice-protect") {
+        let model_ready = app.voice_model_dir.is_some();
+        c = c.push(
+            row![
+                btn("Protect voice", (idle && model_ready).then_some(Message::ProtectVoice)),
+                small(if model_ready {
+                    "Uses local ECAPA-TDNN model (self-encoder cosine drop; external transfer unverified)."
+                } else {
+                    "Set a voice model folder in Technical > Model Library to enable."
+                }),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        );
+    } else if info.kind == MediaKind::Video {
+        c = c.push(small("AI video protection: unavailable. No validated model is installed, so no adversarial changes are made and none are claimed."));
+    }
     if let Some(out) = &m.output {
         c = c.push(
             container(small(format!("Saved and verified: {}", out.display())))
@@ -2526,12 +2554,46 @@ fn media_panel<'a>(app: &'a App, m: &'a MediaEntry, compact: bool) -> El<'a> {
     c.into()
 }
 
-fn models() -> El<'static> {
+fn models(app: &App) -> El<'_> {
+    let show = |p: &Option<std::path::PathBuf>| {
+        p.as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "none".into())
+    };
+    let line = |label: &'static str, msg: Message, value: String| -> El<'_> {
+        row![btn(label, Some(msg)), small(value)]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into()
+    };
     column![
-        small("Installed models: none."),
-        small("Face, person, object, document, segmentation and OCR detectors need licence-reviewed local models (see docs/research/MODEL_LICENSES.md)."),
-        small("Accepted formats: SafeTensors with an independently reviewed manifest (SHA-256, size, code and weight licences). Pickle and executable formats are refused. Verify with: photo-defense verify-model MODEL MANIFEST."),
+        small("LOCAL MODELS (chosen by you; nothing is downloaded)"),
+        if cfg!(feature = "voice-protect") {
+            line("Choose voice model folder", Message::ChooseVoiceModelFolder, format!("Voice model folder: {}", show(&app.voice_model_dir)))
+        } else {
+            small("Voice protection: not included in this build (experimental `voice-protect` feature).").into()
+        },
+        if cfg!(feature = "faces") {
+            line("Choose face model (.onnx)", Message::ChooseFaceModel, format!("Face model: {}", show(&app.face_model_path)))
+        } else {
+            small("Face detection: not included in this build (`faces` feature).").into()
+        },
+        small("Person, object, document, segmentation and OCR detectors need licence-reviewed local models (see docs/research/MODEL_LICENSES.md)."),
+        small("Accepted formats: SafeTensors (and ONNX for face detection) with an independently reviewed manifest (SHA-256, size, code and weight licences). Pickle and executable formats are refused. Verify with: photo-defense verify-model MODEL MANIFEST."),
         small("Downloads and updates: not implemented. The application makes no network connections."),
+        horizontal_rule(1),
+        small("C2PA CONTENT CREDENTIALS (OPTIONAL EXPORT SIGNING)"),
+        if cfg!(feature = "c2pa") {
+            column![
+                line("Choose C2PA cert (.pem)", Message::ChooseC2paCert, format!("Certificate: {}", show(&app.c2pa_cert_path))),
+                line("Choose C2PA key (.pem)", Message::ChooseC2paKey, format!("Private key: {}", show(&app.c2pa_key_path))),
+                small("Signing adds a C2PA manifest to the exported file after verification. It records the edits made and the certificate's identity; leave it unset to export without any metadata."),
+            ]
+            .spacing(6)
+            .into()
+        } else {
+            El::from(small("C2PA: not included in this build (`c2pa` feature)."))
+        },
     ]
     .spacing(6)
     .into()

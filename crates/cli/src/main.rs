@@ -190,8 +190,17 @@ enum Command {
         #[arg(long)]
         bleep: Vec<String>,
     },
-    /// Adversarial voice protection. Refuses: no validated voice model is installed.
-    AudioProtect { input: PathBuf },
+    /// Adversarial voice protection. Refuses without a local ECAPA model directory.
+    AudioProtect {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Local directory containing model.safetensors (and optional manifest.json).
+        #[arg(long)]
+        model: Option<PathBuf>,
+        #[arg(long, default_value = "Balanced Protection")]
+        profile: String,
+    },
     /// Transcribe speech locally with Whisper, detect spoken private data, and optionally bleep it.
     #[cfg(feature = "stt")]
     #[command(name = "audio-transcribe")]
@@ -203,6 +212,22 @@ enum Command {
         /// Optional output WAV path with detected private speech ranges bleeped.
         #[arg(long)]
         redact_to: Option<PathBuf>,
+    },
+    /// Detect assistant wake phrases (Siri, Google, Alexa, Meta, Bixby, custom) with local Whisper and mute/suppress them.
+    #[cfg(feature = "stt")]
+    #[command(name = "voice-safe-playback")]
+    VoiceSafePlayback {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        #[arg(long)]
+        model: PathBuf,
+        /// Suppression mode: mute, bleep, or experimental-band.
+        #[arg(long, default_value = "mute")]
+        mode: String,
+        /// Comma-separated custom wake phrases.
+        #[arg(long, default_value = "")]
+        custom: String,
     },
     /// Scan SRT/WebVTT subtitles for private information; optionally write a redacted copy.
     Subtitles {
@@ -737,9 +762,35 @@ fn main() -> Result<()> {
                 )?)?
             );
         }
-        Command::AudioProtect { input: _ } => anyhow::bail!(
-            "No validated voice-protection model is installed. The audio protection engine refuses to run without one; no file was changed."
-        ),
+        Command::AudioProtect {
+            input,
+            output,
+            model,
+            profile,
+        } => {
+            let Some(model_dir) = model else {
+                anyhow::bail!(
+                    "No validated voice-protection model is installed. The audio protection engine refuses to run without one; no file was changed."
+                );
+            };
+            #[cfg(feature = "voice-protect")]
+            {
+                let out = output.context("Missing -o/--output WAV path")?;
+                let settings = photo_media::protect::Settings::profile(&profile)
+                    .with_context(|| format!("Unknown audio protection profile: {profile}"))?;
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                let report =
+                    photo_media::ecapa::protect_wav(&input, &out, &model_dir, settings, &cancel)?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+            #[cfg(not(feature = "voice-protect"))]
+            {
+                let _ = (input, output, model_dir, profile);
+                anyhow::bail!(
+                    "Built without the `voice-protect` feature; rebuild with `--features voice-protect`."
+                );
+            }
+        }
         #[cfg(feature = "stt")]
         Command::AudioTranscribe {
             input,
@@ -769,6 +820,39 @@ fn main() -> Result<()> {
                 "export": export,
             });
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        #[cfg(feature = "stt")]
+        Command::VoiceSafePlayback {
+            input,
+            output,
+            model,
+            mode,
+            custom,
+        } => {
+            let supp_mode = match mode.to_ascii_lowercase().as_str() {
+                "mute" => photo_media::wake_word::SuppressionMode::Mute,
+                "bleep" => photo_media::wake_word::SuppressionMode::Bleep,
+                "experimental-band" => {
+                    photo_media::wake_word::SuppressionMode::ExperimentalBandSuppress
+                }
+                other => anyhow::bail!(
+                    "Unknown mode '{other}'; expected mute, bleep, or experimental-band"
+                ),
+            };
+            let custom_phrases: Vec<String> = custom
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let hits = photo_media::wake_word::detect_wake_phrases_with_whisper(
+                &input,
+                &model,
+                &photo_media::wake_word::AssistantKind::BUILTINS,
+                &custom_phrases,
+            )?;
+            let rep =
+                photo_media::wake_word::apply_safe_playback(&input, &output, &hits, supp_mode)?;
+            println!("{}", serde_json::to_string_pretty(&rep)?);
         }
         Command::Subtitles { input, redact_to } => {
             let b = read_media(&input)?;
