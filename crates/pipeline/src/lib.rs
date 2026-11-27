@@ -117,24 +117,24 @@ pub fn pre_export_review(
             let unresolved = report
                 .findings
                 .iter()
-                .zip(dismissed)
-                .filter(|(f, d)| !**d && f.region.is_some())
+                .enumerate()
+                .filter(|(i, f)| !dismissed.get(*i).copied().unwrap_or(false) && f.region.is_some())
                 .count();
-            let redactions = edits
-                .active()
-                .iter()
-                .filter(|o| o.is_secure_redaction())
-                .count();
-            if unresolved > 0 && redactions == 0 && !auto_redacted {
+            // A redaction elsewhere in the image does not prove these findings are covered.
+            // Require review/dismissal until coverage can be established in output coordinates.
+            if unresolved > 0 && !auto_redacted {
                 risks.push(format!(
-                    "{unresolved} located finding(s) are neither redacted nor dismissed."
+                    "{unresolved} located finding(s) need review: redaction coverage is not established. Review and dismiss them, or explicitly accept the unresolved findings."
                 ));
             }
             let uncertain = report
                 .findings
                 .iter()
-                .zip(dismissed)
-                .filter(|(f, d)| !**d && f.evidence == photo_privacy::Evidence::Contextual)
+                .enumerate()
+                .filter(|(i, f)| {
+                    !dismissed.get(*i).copied().unwrap_or(false)
+                        && f.evidence == photo_privacy::Evidence::Contextual
+                })
                 .count();
             if uncertain > 0 {
                 risks.push(format!(
@@ -256,7 +256,7 @@ pub fn verify(
             bounds: mask.bounds(),
             pixels_checked: n,
             mismatched: bad,
-            passed: bad == 0,
+            passed: n > 0 && bad == 0,
         });
     }
     let hidden_color = rgba
@@ -283,6 +283,9 @@ pub fn verify(
     if !redaction_geometry_verified {
         warnings.push("Geometry edits follow a redaction, so redaction regions could not be re-located for verification.".into());
     }
+    if redactions.iter().any(|r| r.pixels_checked == 0) {
+        warnings.push("A redaction has no verifiable interior pixels. Enlarge the region or use a lossless export format.".into());
+    }
     if !remaining_findings.is_empty() {
         warnings.push(format!(
             "{} privacy finding(s) remain visible in the exported pixels.",
@@ -292,7 +295,8 @@ pub fn verify(
     if transparency.is_some() {
         warnings.push("The export contains transparency; check that no content is hidden in transparent areas.".into());
     }
-    let passed = metadata_findings.is_empty()
+    let passed = redaction_geometry_verified
+        && metadata_findings.is_empty()
         && remaining_findings
             .iter()
             .all(|f| f.category != Category::AuthenticationCode && !f.category.is_credential())
@@ -359,6 +363,53 @@ mod tests {
     use super::*;
     use photo_edit::Rect;
     use rxing::Writer;
+    #[test]
+    fn unverified_geometry_and_empty_jpeg_interior_block_publication() {
+        let photo = qr_photo("plain text");
+        let profile = Profile::builtin("Social Media").unwrap();
+        for (size, transform, format) in [
+            (20, true, ExportFormat::Png),
+            (2, false, ExportFormat::Jpeg),
+        ] {
+            let mut edits = EditStack::new();
+            edits
+                .push(Operation::Conceal {
+                    selection: Selection::Rect(Rect::new(10, 10, size, size)),
+                    method: Concealment::BLACK,
+                    invert: false,
+                })
+                .unwrap();
+            if transform {
+                edits.push(Operation::FlipHorizontal).unwrap();
+            }
+            let prepared = prepare(&photo, &edits, format, 95, &profile).unwrap();
+            assert!(!prepared.report.verification.passed);
+            let dir = tempfile::tempdir().unwrap();
+            assert!(publish(&prepared, Path::new("input.png"), dir.path(), format, false).is_err());
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        }
+    }
+
+    #[test]
+    fn unrelated_redaction_and_missing_dismissals_do_not_clear_findings() {
+        let photo = qr_photo("otpauth://totp/Example:x?secret=JBSWY3DPEHPK3PXP");
+        let report = scan_photo(&photo, &Profile::builtin("Cybersecurity").unwrap());
+        assert!(report.findings.iter().any(|f| f.region.is_some()));
+        let mut edits = EditStack::new();
+        edits
+            .push(Operation::Conceal {
+                selection: Selection::Rect(Rect::new(0, 0, 8, 8)),
+                method: Concealment::BLACK,
+                invert: false,
+            })
+            .unwrap();
+        for dismissed in [vec![], vec![false; report.findings.len()]] {
+            assert!(!pre_export_review(&edits, Some((&report, &dismissed)), false).is_empty());
+        }
+        let dismissed = vec![true; report.findings.len()];
+        assert!(pre_export_review(&edits, Some((&report, &dismissed)), false).is_empty());
+    }
+
     pub(crate) fn qr_photo(payload: &str) -> Photo {
         let m = rxing::MultiFormatWriter
             .encode(payload, &rxing::BarcodeFormat::QR_CODE, 200, 200)
@@ -482,3 +533,4 @@ mod tests {
         );
     }
 }
+

@@ -233,6 +233,9 @@ enum Command {
         /// Apply strong blur instead of opaque black fill.
         #[arg(long)]
         blur: bool,
+        /// Allow an export despite uncertain tracking; every frame then needs manual review.
+        #[arg(long)]
+        accept_tracking_gaps: bool,
     },
     /// Transcribe speech locally with Whisper, detect spoken private data, and optionally bleep it.
     #[cfg(feature = "stt")]
@@ -802,6 +805,7 @@ fn main() -> Result<()> {
             rect,
             at,
             blur,
+            accept_tracking_gaps,
         } => {
             let parts: Vec<u32> = rect
                 .split(',')
@@ -818,12 +822,26 @@ fn main() -> Result<()> {
             };
             let (tracked, rects) =
                 photo_media::video_track::track_object_in_mp4(&input, &[kf], blur)?;
+            let review_frames = tracked.iter().filter(|b| {
+                !matches!(
+                    b.status,
+                    photo_media::video_track::TrackStatus::Seed
+                        | photo_media::video_track::TrackStatus::Tracked
+                )
+            }).count();
+            anyhow::ensure!(
+                review_frames == 0 || accept_tracking_gaps,
+                "Tracking is uncertain in {review_frames} frames. Review coverage before export; --accept-tracking-gaps explicitly accepts this limitation"
+            );
             let redact = photo_media::video::redact_mp4(&input, &output, &rects)?;
             let verify = photo_media::video_track::verify_redacted_mp4(&output, &rects)?;
             println!(
                 "{}",
                 serde_json::to_string_pretty(&serde_json::json!({
                     "tracked_frames": tracked.len(),
+                    "frames_requiring_review": review_frames,
+                    "tracking": tracked,
+                    "coverage_verified": false,
                     "redact": redact,
                     "frame_verify": verify,
                 }))?
@@ -1135,3 +1153,4 @@ fn experimental_clip(
     );
     Ok(())
 }
+

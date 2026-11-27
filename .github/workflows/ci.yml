@@ -21,6 +21,7 @@ jobs:
       - name: Linux audio headers (ALSA, used only for local A/B playback)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Default-feature build of every target (examples, tests)
         run: cargo check --locked --workspace --all-targets
   platform:
@@ -52,6 +53,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
       - name: Native host tests
         run: cargo test --locked --workspace --all-features
+      - name: Default-feature native host tests
+        run: cargo test --locked --workspace
       - name: Build target applications
         run: cargo build --locked --workspace --all-features --target ${{ matrix.target }}
       - name: Upload development build evidence
@@ -81,8 +84,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config xvfb fonts-dejavu-core imagemagick x11-apps libxkbcommon-x11-0 libxkbcommon0 libx11-xcb1 libxcursor1 libxrandr2 libxi6
-      - name: Build desktop application (release, as shipped)
-        run: cargo build --locked --release -p photo-desktop
+      - name: Build desktop application (release, installer features)
+        run: cargo build --locked --release -p photo-desktop --features faces,c2pa,video,opus
       - name: Launch desktop app and capture screenshot (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -128,3 +131,4 @@ jobs:
           name: gui-smoke-${{ matrix.os }}
           path: gui-smoke-artifacts/
           retention-days: 7
+

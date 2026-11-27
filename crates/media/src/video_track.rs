@@ -382,12 +382,19 @@ pub fn track_object_in_mp4(
 }
 
 /// Independently reopens an exported MP4, decodes every video frame, and verifies that every
-/// active redaction region actually removed original pixel structure.
+/// active redaction region meets an opaque-luma or heuristic blur check. A blur check
+/// cannot establish privacy, and this does not establish tracking coverage of a subject.
 pub fn verify_redacted_mp4(output: &Path, rects: &[RedactRect]) -> Result<FrameVerifyReport> {
+    ensure!(!rects.is_empty(), "At least one redaction rectangle is required");
     let raw = std::fs::read(output)?;
     let probe = mp4::probe(&raw)?;
     let metadata_clean = probe.findings.is_empty();
     let frames = decode_all_luma(output)?;
+    let first = frames.first().ok_or_else(|| anyhow::anyhow!("No video frames to verify"))?;
+    for rect in rects {
+        rect.validate(first.width, first.height)?;
+    }
+    let mut checked_rects = vec![false; rects.len()];
 
     let mut redacted_frames_checked = 0usize;
     let mut failed_frames = 0usize;
@@ -398,18 +405,20 @@ pub fn verify_redacted_mp4(output: &Path, rects: &[RedactRect]) -> Result<FrameV
         let mut frame_failed = false;
         let mut frame_weak_blur = false;
 
-        for r in rects {
+        for (index, r) in rects.iter().enumerate() {
             if frame.pts_s < r.from_s || frame.pts_s > r.to_s {
                 continue;
             }
-            frame_had_rect = true;
             let x0 = r.x.min(frame.width);
             let y0 = r.y.min(frame.height);
-            let x1 = (r.x + r.width).min(frame.width);
-            let y1 = (r.y + r.height).min(frame.height);
+            let x1 = r.x.saturating_add(r.width).min(frame.width);
+            let y1 = r.y.saturating_add(r.height).min(frame.height);
             if x1 <= x0 || y1 <= y0 {
+                frame_failed = true;
                 continue;
             }
+            frame_had_rect = true;
+            checked_rects[index] = true;
 
             if !r.blur {
                 // Trim 1px border when region is >= 4x4 to tolerate H.264 4:2:0 / deblock ringing.
@@ -465,7 +474,10 @@ pub fn verify_redacted_mp4(output: &Path, rects: &[RedactRect]) -> Result<FrameV
         failed_frames,
         weak_blur_frames,
         metadata_clean,
-        passed: metadata_clean && failed_frames == 0,
+        passed: metadata_clean
+            && failed_frames == 0
+            && weak_blur_frames == 0
+            && checked_rects.iter().all(|checked| *checked),
     })
 }
 
@@ -618,3 +630,4 @@ mod tests {
         assert!(verify.failed_frames > 0);
     }
 }
+

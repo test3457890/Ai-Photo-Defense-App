@@ -138,15 +138,10 @@ pub fn sign_bytes(
     let mut builder = Builder::from_context(c2pa::Context::default())
         .with_definition(&manifest_json)
         .context("Invalid C2PA manifest JSON")?;
-    let signer = [
-        SigningAlg::Es256,
-        SigningAlg::Es384,
-        SigningAlg::Ed25519,
-        SigningAlg::Ps256,
-    ]
-    .into_iter()
-    .find_map(|alg| create_signer::from_keys(cert_pem, key_pem, alg, None).ok())
-    .context("Failed to initialize C2PA signer from PEM certificate and key")?;
+    // Keep RSA private-key operations unreachable, as required by the documented
+    // RUSTSEC-2023-0071 exception. Never probe alternative signing algorithms.
+    let signer = create_signer::from_keys(cert_pem, key_pem, SigningAlg::Es256, None)
+        .context("C2PA signing requires an ES256 (ECDSA P-256) certificate and key")?;
 
     let mut out = Cursor::new(Vec::new());
     builder
@@ -158,6 +153,25 @@ pub fn sign_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signing_refuses_non_es256_keys() {
+        let params = rcgen::CertificateParams::new(vec!["test.local".into()]).unwrap();
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P384_SHA384).unwrap();
+        let cert = params.self_signed(&key).unwrap();
+        let mut jpeg = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(16, 16)
+            .write_to(&mut jpeg, image::ImageFormat::Jpeg)
+            .unwrap();
+        let err = sign_bytes(
+            &jpeg.into_inner(),
+            cert.pem().as_bytes(),
+            key.serialize_pem().as_bytes(),
+            &[],
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("ES256"));
+    }
 
     #[test]
     fn sign_and_verify_with_untrusted_self_signed_cert() {
@@ -213,3 +227,4 @@ mod tests {
         assert!(status.contains("C2PA manifest verified"));
     }
 }
+
