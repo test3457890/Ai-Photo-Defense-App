@@ -2185,6 +2185,12 @@ fn lab(app: &App) -> El<'_> {
                 ))
             ),
             btn(
+                "Batch Validation",
+                app.busy
+                    .is_none()
+                    .then_some(Message::RunValidation(ValidationMode::BatchValidation))
+            ),
+            btn(
                 "Export .md",
                 app.validation_report
                     .is_some()
@@ -2271,6 +2277,18 @@ fn lab(app: &App) -> El<'_> {
         }
         for lim in &rep.limitations {
             c = c.push(small(format!("Note: {lim}")));
+        }
+    }
+    if !app.batch_validation.is_empty() {
+        c = c
+            .push(horizontal_rule(1))
+            .push(small("BATCH VALIDATION RESULTS"));
+        for row_text in &app.batch_validation {
+            c = c.push(
+                text(row_text.as_str())
+                    .size(FONT_SMALL)
+                    .font(iced::Font::MONOSPACE),
+            );
         }
     }
 
@@ -2762,6 +2780,16 @@ fn models(app: &App) -> El<'_> {
             line("Choose face model (.onnx)", Message::ChooseFaceModel, format!("Face model: {}", show(&app.face_model_path)))
         } else {
             small("Face detection: not included in this build (`faces` feature).").into()
+        },
+        if cfg!(feature = "experimental-clip") {
+            column![
+                line("Choose CLIP model (.safetensors)", Message::ChooseClipModel, format!("CLIP model: {}", show(&app.clip_model_path))),
+                line("Choose CLIP manifest (.json)", Message::ChooseClipManifest, format!("CLIP manifest: {}", show(&app.clip_manifest_path))),
+            ]
+            .spacing(4)
+            .into()
+        } else {
+            El::from(small("CLIP validation: not included in this build (`experimental-clip` feature)."))
         },
         small("Person, object, document, segmentation and OCR detectors need licence-reviewed local models (see docs/research/MODEL_LICENSES.md)."),
         small("Accepted formats: SafeTensors (and ONNX for face detection) with an independently reviewed manifest (SHA-256, size, code and weight licences). Pickle and executable formats are refused. Verify with: photo-defense verify-model MODEL MANIFEST."),

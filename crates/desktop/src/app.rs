@@ -530,6 +530,11 @@ pub enum Message {
     ProtectVoice,
     ChooseFaceModel,
     FaceModelChosen(Option<PathBuf>),
+    ChooseClipModel,
+    ClipModelChosen(Option<PathBuf>),
+    ChooseClipManifest,
+    ClipManifestChosen(Option<PathBuf>),
+    BatchValidationDone(Vec<String>),
     SelectFace(photo_privacy::Rect),
     SelectAllFaces,
     PaneResized(pane_grid::ResizeEvent),
@@ -615,6 +620,9 @@ pub struct App {
     pub playing: Option<(usize, bool)>,
     pub voice_model_dir: Option<PathBuf>,
     pub face_model_path: Option<PathBuf>,
+    pub clip_model_path: Option<PathBuf>,
+    pub clip_manifest_path: Option<PathBuf>,
+    pub batch_validation: Vec<String>,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -1352,6 +1360,9 @@ impl App {
             playing: None,
             voice_model_dir: None,
             face_model_path: None,
+            clip_model_path: None,
+            clip_manifest_path: None,
+            batch_validation: vec![],
         };
         app.refresh_library();
         app
@@ -2801,6 +2812,70 @@ impl App {
                 }
             }
             Message::RunValidation(mode) => {
+                if mode == photo_lab::validation::ValidationMode::BatchValidation {
+                    if self.entries.is_empty() {
+                        self.note("Import photographs first for Batch Validation.");
+                        return Task::none();
+                    }
+                    let items: Vec<(String, PathBuf, PathBuf)> = self
+                        .entries
+                        .iter()
+                        .map(|e| {
+                            let cand = match &e.export {
+                                Some(ExportState::Done { path, .. }) => path.clone(),
+                                _ => e.path.clone(),
+                            };
+                            (e.name.clone(), e.path.clone(), cand)
+                        })
+                        .collect();
+                    let face_model = self.face_model_path.clone();
+                    let clip_model = self.clip_model_path.clone();
+                    let clip_manifest = self.clip_manifest_path.clone();
+                    self.busy = Some("Running Batch Validation".into());
+                    return Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || {
+                                items
+                                    .into_iter()
+                                    .map(|(name, orig, cand)| {
+                                        let res = (|| -> anyhow::Result<String> {
+                                            let a = photo_core::load(&orig)?;
+                                            let b = photo_core::load(&cand)?;
+                                            let cfg = photo_lab::validation::ValidationConfig {
+                                                mode: Some(photo_lab::validation::ValidationMode::QuickProtectionTest),
+                                                face_model_path: face_model.clone(),
+                                                clip_model_path: clip_model.clone(),
+                                                clip_manifest_path: clip_manifest.clone(),
+                                                original_bytes: Some(a.bytes.len() as u64),
+                                                candidate_bytes: Some(b.bytes.len() as u64),
+                                            };
+                                            let rep = photo_lab::validation::run_validation(&a.pixels, &b.pixels, &cfg)?;
+                                            let summary: Vec<String> = rep
+                                                .tests
+                                                .iter()
+                                                .map(|t| format!("{}: {}", t.category.label(), t.classification.label()))
+                                                .collect();
+                                            Ok(format!(
+                                                "{name} ({}x{}, SSIM {:.4}) — {}",
+                                                rep.quality.resolution[0],
+                                                rep.quality.resolution[1],
+                                                rep.quality.base.ssim_luma_8x8,
+                                                summary.join(" | ")
+                                            ))
+                                        })();
+                                        match res {
+                                            Ok(line) => line,
+                                            Err(e) => format!("{name} — Error: {e}"),
+                                        }
+                                    })
+                                    .collect()
+                            })
+                            .await
+                            .unwrap_or_default()
+                        },
+                        Message::BatchValidationDone,
+                    );
+                }
                 let Some(e) = self.current() else {
                     self.note("Select a photograph first.");
                     return Task::none();
@@ -2810,6 +2885,8 @@ impl App {
                     _ => (e.path.clone(), e.path.clone()),
                 };
                 let face_model = self.face_model_path.clone();
+                let clip_model = self.clip_model_path.clone();
+                let clip_manifest = self.clip_manifest_path.clone();
                 self.busy = Some(format!("Running {}", mode.label()));
                 return Task::perform(
                     async move {
@@ -2819,8 +2896,8 @@ impl App {
                             let cfg = photo_lab::validation::ValidationConfig {
                                 mode: Some(mode),
                                 face_model_path: face_model,
-                                clip_model_path: None,
-                                clip_manifest_path: None,
+                                clip_model_path: clip_model,
+                                clip_manifest_path: clip_manifest,
                                 original_bytes: Some(a.bytes.len() as u64),
                                 candidate_bytes: Some(b.bytes.len() as u64),
                             };
@@ -2833,6 +2910,14 @@ impl App {
                     },
                     Message::ValidationDone,
                 );
+            }
+            Message::BatchValidationDone(rows) => {
+                self.busy = None;
+                self.note(format!(
+                    "Batch validation finished ({} item(s))",
+                    rows.len()
+                ));
+                self.batch_validation = rows;
             }
             Message::ValidationDone(r) => {
                 self.busy = None;
@@ -3297,6 +3382,38 @@ impl App {
                 self.dirty_project = true;
             }
             Message::FaceModelChosen(None) => {}
+            Message::ChooseClipModel => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("SafeTensors model", &["safetensors"])
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::ClipModelChosen,
+                );
+            }
+            Message::ClipModelChosen(Some(p)) => {
+                self.clip_model_path = Some(p);
+            }
+            Message::ClipModelChosen(None) => {}
+            Message::ChooseClipManifest => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("Manifest JSON", &["json"])
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::ClipManifestChosen,
+                );
+            }
+            Message::ClipManifestChosen(Some(p)) => {
+                self.clip_manifest_path = Some(p);
+            }
+            Message::ClipManifestChosen(None) => {}
             Message::SelectFace(r) => {
                 self.tool = Tool::Rect;
                 self.selection = Some(Selection::Rect(photo_edit::Rect {

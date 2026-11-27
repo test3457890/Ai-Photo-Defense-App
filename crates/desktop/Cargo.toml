@@ -34,6 +34,7 @@ faces = ["photo-privacy/faces", "photo-lab/faces"]
 c2pa = ["photo-privacy/c2pa"]
 video = ["photo-media/video"]
 opus = ["photo-media/opus"]
+experimental-clip = ["photo-lab/clip"]
 
 [package.metadata.deb]
 maintainer = "AI Photo Defense Contributors"
