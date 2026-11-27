@@ -324,55 +324,28 @@ impl AttentiveStatisticsPooling {
     }
 }
 
-/// Slaney-scale mel filterbank matching SpeechBrain Fbank (`n_mels=80`, `n_fft=400`, `16 kHz`).
-pub fn slaney_mel_filters(sample_rate: usize, n_fft: usize, n_mels: usize) -> Vec<f32> {
+/// Triangular mel filterbank exactly as SpeechBrain's `Filterbank` builds it (HTK mel scale,
+/// `n_mels + 2` points from 0 Hz to Nyquist, each triangle as wide as the spacing to the next
+/// centre on both sides, no area normalisation). Returned as `[n_mels][n_freqs]`.
+pub fn speechbrain_mel_filters(sample_rate: usize, n_fft: usize, n_mels: usize) -> Vec<f32> {
     let n_freqs = n_fft / 2 + 1;
-    let f_sp = 200.0 / 3.0;
-    let min_log_hz = 1000.0;
-    let min_log_mel = min_log_hz / f_sp;
-    let logstep = 6.4_f64.ln() / 27.0;
-    let hz_to_mel = |f: f64| {
-        if f >= min_log_hz {
-            min_log_mel + (f / min_log_hz).ln() / logstep
-        } else {
-            f / f_sp
-        }
-    };
-    let mel_to_hz = |m: f64| {
-        if m >= min_log_mel {
-            min_log_hz * ((m - min_log_mel) * logstep).exp()
-        } else {
-            m * f_sp
-        }
-    };
-    let mel_min = hz_to_mel(0.0);
-    let mel_max = hz_to_mel(sample_rate as f64 / 2.0);
-    let n_pts = n_mels + 2;
-    let mel_freqs: Vec<f64> = (0..n_pts)
-        .map(|i| mel_to_hz(mel_min + (mel_max - mel_min) * (i as f64) / ((n_pts - 1) as f64)))
+    let to_mel = |hz: f64| 2595.0 * (1.0 + hz / 700.0).log10();
+    let to_hz = |mel: f64| 700.0 * (10f64.powf(mel / 2595.0) - 1.0);
+    let f_max = (sample_rate / 2) as f64;
+    let (m0, m1) = (to_mel(0.0), to_mel(f_max));
+    let hz: Vec<f64> = (0..n_mels + 2)
+        .map(|i| to_hz(m0 + (m1 - m0) * i as f64 / (n_mels + 1) as f64))
         .collect();
-    let fft_freqs: Vec<f64> = (0..n_freqs)
-        .map(|i| (i as f64) * (sample_rate as f64) / (n_fft as f64))
-        .collect();
-    let mut weights = vec![0.0_f32; n_mels * n_freqs];
+    let mut w = vec![0f32; n_mels * n_freqs];
     for m in 0..n_mels {
-        let (fl, fc, fr) = (mel_freqs[m], mel_freqs[m + 1], mel_freqs[m + 2]);
-        let enorm = 2.0 / (fr - fl);
-        for (k, &freq) in fft_freqs.iter().enumerate() {
-            let lo = if fc > fl {
-                (freq - fl) / (fc - fl)
-            } else {
-                0.0
-            };
-            let hi = if fr > fc {
-                (fr - freq) / (fr - fc)
-            } else {
-                0.0
-            };
-            weights[m * n_freqs + k] = (lo.min(hi).max(0.0) * enorm) as f32;
+        let (fc, band) = (hz[m + 1], hz[m + 1] - hz[m]);
+        for k in 0..n_freqs {
+            let f = f_max * k as f64 / (n_freqs - 1) as f64;
+            let slope = (f - fc) / band;
+            w[m * n_freqs + k] = (slope + 1.0).min(1.0 - slope).max(0.0) as f32;
         }
     }
-    weights
+    w
 }
 
 /// Precomputed differentiable Fbank projection matrices matching SpeechBrain's `Fbank(n_mels=80)`.
@@ -385,14 +358,15 @@ struct DifferentiableFbank {
 
 impl DifferentiableFbank {
     fn new(device: &Device) -> Result<Self> {
-        let hann: Vec<f32> = (0..N_FFT)
-            .map(|i| 0.5 - 0.5 * (2.0 * std::f32::consts::PI * i as f32 / N_FFT as f32).cos())
+        // torch.hamming_window(400) (periodic), as used by SpeechBrain's STFT.
+        let window: Vec<f32> = (0..N_FFT)
+            .map(|i| 0.54 - 0.46 * (2.0 * std::f32::consts::PI * i as f32 / N_FFT as f32).cos())
             .collect();
 
         let mut cos_w = vec![0.0_f32; N_FFT * N_FREQS];
         let mut sin_w = vec![0.0_f32; N_FFT * N_FREQS];
         for n in 0..N_FFT {
-            let win = hann[n];
+            let win = window[n];
             for k in 0..N_FREQS {
                 let angle = 2.0 * std::f32::consts::PI * (k as f32) * (n as f32) / (N_FFT as f32);
                 cos_w[n * N_FREQS + k] = win * angle.cos();
@@ -400,7 +374,7 @@ impl DifferentiableFbank {
             }
         }
 
-        let mel = slaney_mel_filters(ECAPA_SAMPLE_RATE as usize, N_FFT, N_MELS);
+        let mel = speechbrain_mel_filters(ECAPA_SAMPLE_RATE as usize, N_FFT, N_MELS);
         // Transpose mel from [N_MELS, N_FREQS] to [N_FREQS, N_MELS]
         let mut mel_t = vec![0.0_f32; N_FREQS * N_MELS];
         for m in 0..N_MELS {
@@ -423,10 +397,12 @@ impl DifferentiableFbank {
             n >= N_FFT,
             "Audio must be at least {N_FFT} samples at 16 kHz"
         );
-        let n_frames = (n - N_FFT) / HOP_LENGTH + 1;
+        // Centred STFT with zero padding (SpeechBrain: center=True, pad_mode="constant").
+        let x = x_1d.pad_with_zeros(0, N_FFT / 2, N_FFT / 2)?;
+        let n_frames = n / HOP_LENGTH + 1;
         let mut frames = Vec::with_capacity(n_frames);
         for i in 0..n_frames {
-            frames.push(x_1d.narrow(0, i * HOP_LENGTH, N_FFT)?);
+            frames.push(x.narrow(0, i * HOP_LENGTH, N_FFT)?);
         }
         let frame_refs: Vec<&Tensor> = frames.iter().collect();
         let framed = Tensor::stack(&frame_refs, 0)?; // [T, 400]
@@ -435,8 +411,11 @@ impl DifferentiableFbank {
         let im = framed.matmul(&self.w_sin)?;
         let power = (re.sqr()? + im.sqr()?)?; // [T, 201]
         let mel = power.matmul(&self.mel_fb)?; // [T, 80]
+        // 10*log10(max(x, 1e-10)), then clamp to (utterance max - 80 dB) as SpeechBrain does.
         let log_scale = (10.0 / 10.0_f64.ln()) as f32;
-        let log_mel = ((mel + 1e-10)?.log()? * f64::from(log_scale))?; // [T, 80]
+        let db = (mel.maximum(1e-10)?.log()? * f64::from(log_scale))?;
+        let floor = db.max_all()?.to_scalar::<f32>()? - 80.0;
+        let log_mel = db.maximum(floor)?;
 
         // Sentence mean normalization along time (dim 0)
         let mean = log_mel.mean_keepdim(0)?;
@@ -458,7 +437,6 @@ pub struct EcapaEncoder {
     asp: AttentiveStatisticsPooling,
     asp_bn: BatchNorm1dEval,
     fc: Conv1d,
-    emb_glob_mean: Option<Tensor>,
     device: Device,
 }
 
@@ -482,7 +460,6 @@ impl EcapaEncoder {
         let asp = AttentiveStatisticsPooling::load(3072, 128, vb.pp("asp"))?;
         let asp_bn = BatchNorm1dEval::load(6144, 1e-5, vb.pp("asp_bn.norm"))?;
         let fc = candle_nn::conv1d(6144, EMB_DIM, 1, Conv1dConfig::default(), vb.pp("fc.conv"))?;
-        let emb_glob_mean = vb.get(EMB_DIM, "emb_norm.glob_mean").ok();
 
         Ok(Self {
             fbank,
@@ -494,7 +471,6 @@ impl EcapaEncoder {
             asp,
             asp_bn,
             fc,
-            emb_glob_mean,
             device: device.clone(),
         })
     }
@@ -510,12 +486,9 @@ impl EcapaEncoder {
         let mfa = self.mfa.forward(&cat)?;
         let asp = self.asp.forward(&mfa)?;
         let asp = self.asp_bn.forward(&asp)?;
-        let emb = self.fc.forward(&asp)?.squeeze(2)?.squeeze(0)?; // [192]
-        if let Some(gm) = &self.emb_glob_mean {
-            Ok((emb - gm)?)
-        } else {
-            Ok(emb)
-        }
+        // Raw embedding, as SpeechBrain's `encode_batch` (normalize=False) and `verify_batch`
+        // return it; the optional global mean (`emb_glob_mean`) is not subtracted.
+        Ok(self.fc.forward(&asp)?.squeeze(2)?.squeeze(0)?) // [192]
     }
 
     /// Computes an L2-normalized 192-D speaker embedding from 16 kHz mono samples.
@@ -842,6 +815,48 @@ mod tests {
         assert!(protected.peak <= 1.0);
     }
 
+    /// Compares the feature front end with SpeechBrain's on the "harmonic_pulse" waveform, using
+    /// a JSON dump ({"feats": [[80 values] per frame]}) named by APD_ECAPA_FEATS.
+    #[test]
+    #[ignore = "Requires a SpeechBrain feature dump in APD_ECAPA_FEATS"]
+    fn fbank_matches_speechbrain() {
+        let path = std::env::var("APD_ECAPA_FEATS").expect("APD_ECAPA_FEATS must be set");
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let py: Vec<Vec<f32>> = serde_json::from_value(v["feats"].clone()).unwrap();
+        let (sr, secs) = (16_000usize, 1.5f32);
+        let wave: Vec<f32> = (0..(sr as f32 * secs) as usize)
+            .map(|i| {
+                let t = i as f32 / sr as f32;
+                (1..=5)
+                    .map(|k| {
+                        (0.25 / k as f32)
+                            * (2.0 * std::f32::consts::PI * 130.0 * k as f32 * t).sin()
+                    })
+                    .sum()
+            })
+            .collect();
+        let fb = DifferentiableFbank::new(&Device::Cpu).unwrap();
+        let x = Tensor::from_vec(wave.clone(), wave.len(), &Device::Cpu).unwrap();
+        let rs = fb
+            .forward(&x)
+            .unwrap()
+            .squeeze(0)
+            .unwrap()
+            .t()
+            .unwrap()
+            .to_vec2::<f32>()
+            .unwrap();
+        assert_eq!(rs.len(), py.len(), "frame count");
+        let mut max_d = 0f32;
+        for (a, b) in rs.iter().zip(&py) {
+            for (x, y) in a.iter().zip(b) {
+                max_d = max_d.max((x - y).abs());
+            }
+        }
+        println!("max |feature difference| = {max_d}");
+        assert!(max_d < 0.05, "features differ by {max_d} dB");
+    }
+
     #[test]
     #[ignore = "Requires converted SpeechBrain ECAPA model + parity_refs.json in APD_ECAPA_DIR"]
     fn parity_with_speechbrain_python_embeddings() {
@@ -887,6 +902,7 @@ mod tests {
                 .zip(ref_emb)
                 .map(|(a, b)| a * (b / ref_norm))
                 .sum();
+            println!("parity cosine {name}: {cos:.6}");
             assert!(
                 cos > 0.999,
                 "Parity cosine for {name} was {cos} (expected > 0.999)"

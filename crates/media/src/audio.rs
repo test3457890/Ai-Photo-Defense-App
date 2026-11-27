@@ -30,6 +30,8 @@ pub struct StreamInfo {
     pub bits_per_sample: Option<u32>,
     pub frames: Option<u64>,
     pub findings: Vec<Finding>,
+    /// Decoding caveats the user should know about (for example HE-AAC core-only decoding).
+    pub notes: Vec<String>,
 }
 
 enum CodecDecoder {
@@ -45,6 +47,8 @@ pub struct Decoder {
     pub info: StreamInfo,
     pub decoded_frames: u64,
     pub decode_errors: u64,
+    /// First decoded block, kept when it had to be decoded early to learn the channel count.
+    pending: Option<Vec<f32>>,
 }
 
 fn tag_findings(rev: &MetadataRevision, out: &mut Vec<Finding>) {
@@ -152,14 +156,10 @@ impl Decoder {
             (1..=MAX_SAMPLE_RATE).contains(&sample_rate),
             "Invalid sample rate {sample_rate}"
         );
-        let channels = p
-            .channels
-            .map(|c| c.count())
-            .context("Unknown channel layout")?;
-        ensure!(
-            (1..=MAX_CHANNELS).contains(&channels),
-            "Invalid channel count {channels}"
-        );
+        // Some containers (for example AAC in MP4) only reveal the channel count once a packet is
+        // decoded; 0 means "learn it from the first decoded packet".
+        let channels = p.channels.map(|c| c.count()).unwrap_or(0);
+        ensure!(channels <= MAX_CHANNELS, "Invalid channel count {channels}");
         if let Some(n) = p.n_frames {
             ensure!(
                 n <= MAX_FRAMES,
@@ -184,7 +184,7 @@ impl Decoder {
                 craft_audio::opus::Decoder::new(extra)
                     .map_err(|e| anyhow::anyhow!("Invalid OpusHead: {e}"))?
             } else {
-                craft_audio::opus::Decoder::simple(48_000, channels)
+                craft_audio::opus::Decoder::simple(48_000, channels.max(1))
                     .map_err(|e| anyhow::anyhow!("Invalid Opus stream: {e}"))?
             };
             dec.set_trim_pre_skip(true);
@@ -209,16 +209,26 @@ impl Decoder {
             bits_per_sample: p.bits_per_sample,
             frames: p.n_frames,
             findings,
+            notes: vec![],
         };
         let id = track.id;
-        Ok(Self {
+        let mut s = Self {
             format,
             decoder,
             track: id,
             info,
             decoded_frames: 0,
             decode_errors: 0,
-        })
+            pending: None,
+        };
+        // Decode the first packet now: it reveals the channel count when the container does not
+        // state it, and the true sample rate of HE-AAC streams (see next_inner).
+        s.pending = s.next_inner()?;
+        ensure!(
+            s.info.channels > 0,
+            "Unknown channel layout: no audio could be decoded"
+        );
+        Ok(s)
     }
     pub fn open(path: &Path) -> Result<Self> {
         let meta = std::fs::symlink_metadata(path)?;
@@ -250,6 +260,9 @@ impl Decoder {
         guard("decode", || self.next_inner())
     }
     fn next_inner(&mut self) -> Result<Option<Vec<f32>>> {
+        if let Some(b) = self.pending.take() {
+            return Ok(Some(b));
+        }
         loop {
             let packet = match self.format.next_packet() {
                 Ok(p) => p,
@@ -266,10 +279,29 @@ impl Decoder {
                 CodecDecoder::Symphonia(dec) => match dec.decode(&packet) {
                     Ok(buf) => {
                         let spec = *buf.spec();
+                        if self.info.channels == 0 {
+                            let n = spec.channels.count();
+                            ensure!((1..=MAX_CHANNELS).contains(&n), "Invalid channel count {n}");
+                            self.info.channels = n;
+                        }
                         ensure!(
                             spec.channels.count() == self.info.channels,
                             "Channel layout changed mid-stream"
                         );
+                        // HE-AAC (SBR/PS): Symphonia decodes only the AAC core, which runs at half
+                        // the signalled rate. The container's packet duration is then twice the
+                        // decoded frame count; use the core rate so timing stays correct.
+                        if self.decoded_frames == 0
+                            && buf.frames() > 0
+                            && packet.dur == 2 * buf.frames() as u64
+                            && self.info.codec.to_ascii_lowercase().contains("aac")
+                        {
+                            self.info.sample_rate /= 2;
+                            self.info.notes.push(format!(
+                                "HE-AAC stream: only the AAC core is decoded (spectral band replication and parametric stereo are not supported), so the audio is {} Hz, {}-channel with reduced high-frequency detail. Timing is preserved.",
+                                self.info.sample_rate, self.info.channels
+                            ));
+                        }
                         let mut sb = SampleBuffer::<f32>::new(buf.capacity() as u64, spec);
                         sb.copy_interleaved_ref(buf);
                         let s = sb.samples().to_vec();
@@ -364,6 +396,8 @@ pub struct Analysis {
     /// Columns of 64 log-spaced band magnitudes in dB (mono mix).
     pub spectrogram: Vec<Vec<f32>>,
     pub decode_errors: u64,
+    /// Decoding caveats (copied from the decoder).
+    pub notes: Vec<String>,
 }
 
 const COLUMNS: usize = 1200;
@@ -491,6 +525,7 @@ pub fn analyze(path: &Path) -> Result<Analysis> {
         waveform: wave,
         spectrogram: spec,
         decode_errors: d.decode_errors,
+        notes: d.info.notes.clone(),
     })
 }
 
@@ -767,10 +802,13 @@ pub fn export_wav(input: &Path, output: &Path, segments: &[Segment]) -> Result<E
         source_metadata_removed: d.info.findings.iter().map(|f| f.description.clone()).collect(),
         verified,
         max_unredacted_difference: maxd,
-        notes: vec![
-            "Lossy sources (MP3, AAC, Vorbis) are written as lossless WAV of the decoded audio; re-encoding for publication is not implemented.".into(),
-            "Bleeps are a 1 kHz tone at -20 dBFS with 5 ms fades. Muting removes the audio; the words are not recoverable from the export.".into(),
-        ],
+        notes: [
+            "Lossy sources (MP3, AAC, Vorbis) are written as lossless WAV of the decoded audio; re-encoding for publication is not implemented.".to_string(),
+            "Bleeps are a 1 kHz tone at -20 dBFS with 5 ms fades. Muting removes the audio; the words are not recoverable from the export.".to_string(),
+        ]
+        .into_iter()
+        .chain(d.info.notes.iter().cloned())
+        .collect(),
     })
 }
 

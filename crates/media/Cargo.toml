@@ -42,3 +42,7 @@ craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "a4db7995
 [[example]]
 name = "synth_h264"
 required-features = ["video"]
+
+[[example]]
+name = "transcribe"
+required-features = ["stt"]
