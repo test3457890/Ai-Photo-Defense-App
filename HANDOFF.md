@@ -1,5 +1,13 @@
 # AI Photo Defense development handoff
 
+## Part 5 integration (2026-11-26, Claude Opus 5.5 with Google Antigravity)
+
+Antigravity built twelve `ag/*` branches; Claude reviewed them, merged eight into `claude/part5-integration`, fixed what the review found, and ran the checks. Full record: [docs/PART5_VALIDATION_REPORT.md](docs/PART5_VALIDATION_REPORT.md).
+
+- **Merged:** face detection (verified on real public-domain photos), C2PA, installers (tool versions pinned, appimagetool checksum-verified), GUI smoke CI, logo/icons, experimental voice protection, wake-word safe playback, Ask AI (loopback-only, 4 MiB cap), UI scaling.
+- **Not merged:** video frames, video tracking and Opus. Their codec crates (`filmcraft-*` on crates.io) come from a publisher with no verifiable link to FilmCraft. **First task for the next session:** port those branches to the official `storytold/craft-libs` (Apache-2.0) pinned by commit, then test on a real phone clip.
+- **Unverified (no model files or devices here):** ECAPA parity and voice-protection effect, Whisper accuracy, wake-word suppression on real assistants, C2PA with a CA-issued certificate.
+
 ## Part 5 increment (2026-11-26, Claude Opus 5.5)
 
 Branch `claude/part5-release`, on top of Part 4. The owner asked for Parts 2 to 5 to be merged into `main` so the review can start from one branch. Specification as received (cut off in section 8): [docs/PART5_SPECIFICATION.md](docs/PART5_SPECIFICATION.md). Master checklist and sweep results: [docs/IMPLEMENTATION_MATRIX.md#part-5](docs/IMPLEMENTATION_MATRIX.md#part-5).

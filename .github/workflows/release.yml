@@ -40,11 +40,11 @@ jobs:
           persist-credentials: false
       - run: rustup toolchain install 1.100.0 --profile minimal
       - name: Build release binaries
-        run: cargo build --locked --release -p photo-desktop -p photo-cli
+        run: cargo build --locked --release -p photo-desktop -p photo-cli --features photo-desktop/faces,photo-desktop/c2pa,photo-cli/faces,photo-cli/c2pa
       - name: Install cargo-wix and build unsigned MSI
         shell: pwsh
         run: |
-          cargo install cargo-wix --locked
+          cargo install cargo-wix --version 0.3.9 --locked
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           cargo wix --nocapture --no-build -p photo-desktop -i packaging/wix/main.wxs -o dist/ai-photo-defense-windows-x64-unsigned.msi
           Copy-Item LICENSE, THIRD_PARTY.md, PRIVACY.md dist/
@@ -69,11 +69,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config desktop-file-utils libfuse2
       - name: Build release binaries
-        run: cargo build --locked --release -p photo-desktop -p photo-cli
+        run: cargo build --locked --release -p photo-desktop -p photo-cli --features photo-desktop/faces,photo-desktop/c2pa,photo-cli/faces,photo-cli/c2pa
       - name: Build .deb package
         run: |
           mkdir -p dist
-          cargo install cargo-deb --locked
+          cargo install cargo-deb --version 3.8.0 --locked
           cargo deb -p photo-desktop --no-build -o dist/ai-photo-defense-linux-x64-unsigned.deb
       - name: Build AppImage (unsigned)
         run: |
@@ -89,7 +89,8 @@ jobs:
           exec "$HERE/usr/bin/photo-desktop" "$@"
           EOF
           chmod +x AppDir/AppRun
-          curl -fsSL -o appimagetool.AppImage https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          curl -fsSL -o appimagetool.AppImage https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool.AppImage" | sha256sum -c -
           chmod +x appimagetool.AppImage
           ARCH=x86_64 ./appimagetool.AppImage --appimage-extract-and-run AppDir dist/ai-photo-defense-linux-x64-unsigned.AppImage
       - name: Generate checksums
@@ -119,7 +120,7 @@ jobs:
       - run: rustup toolchain install 1.100.0 --profile minimal
       - run: rustup target add ${{ matrix.target }} --toolchain 1.100.0
       - name: Build release binaries
-        run: cargo build --locked --release --target ${{ matrix.target }} -p photo-desktop -p photo-cli
+        run: cargo build --locked --release --target ${{ matrix.target }} -p photo-desktop -p photo-cli --features photo-desktop/faces,photo-desktop/c2pa,photo-cli/faces,photo-cli/c2pa
       - name: Create .app bundle and unsigned .dmg
         run: |
           APP="dist/stage/AI Photo Defense.app"

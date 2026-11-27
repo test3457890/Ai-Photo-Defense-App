@@ -208,8 +208,11 @@ pub fn ask_ollama_local(cfg: &OllamaConfig, prompt: &str) -> Result<String> {
         body.len()
     );
     stream.write_all(req.as_bytes())?;
+    // A local server is still untrusted input: cap the response at 4 MiB.
     let mut raw = String::new();
-    stream.read_to_string(&mut raw)?;
+    (&mut stream)
+        .take(4 * 1024 * 1024)
+        .read_to_string(&mut raw)?;
     let json_part = raw
         .split_once("\r\n\r\n")
         .map(|(_, b)| b)

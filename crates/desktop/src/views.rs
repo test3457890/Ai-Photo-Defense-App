@@ -2479,7 +2479,7 @@ fn media_panel<'a>(app: &'a App, m: &'a MediaEntry, compact: bool) -> El<'a> {
         .spacing(8)
         .align_y(Alignment::Center),
     );
-    if info.kind == MediaKind::Audio {
+    if info.kind == MediaKind::Audio && cfg!(feature = "voice-protect") {
         let model_ready = app.voice_model_dir.is_some();
         c = c.push(
             row![
@@ -2575,15 +2575,32 @@ fn models(app: &App) -> El<'_> {
     };
     column![
         small("LOCAL MODELS (chosen by you; nothing is downloaded)"),
-        line("Choose voice model folder", Message::ChooseVoiceModelFolder, format!("Voice model folder: {}", show(&app.voice_model_dir))),
-        line("Choose face model (.onnx)", Message::ChooseFaceModel, format!("Face model: {}", show(&app.face_model_path))),
+        if cfg!(feature = "voice-protect") {
+            line("Choose voice model folder", Message::ChooseVoiceModelFolder, format!("Voice model folder: {}", show(&app.voice_model_dir)))
+        } else {
+            small("Voice protection: not included in this build (experimental `voice-protect` feature).").into()
+        },
+        if cfg!(feature = "faces") {
+            line("Choose face model (.onnx)", Message::ChooseFaceModel, format!("Face model: {}", show(&app.face_model_path)))
+        } else {
+            small("Face detection: not included in this build (`faces` feature).").into()
+        },
         small("Person, object, document, segmentation and OCR detectors need licence-reviewed local models (see docs/research/MODEL_LICENSES.md)."),
         small("Accepted formats: SafeTensors (and ONNX for face detection) with an independently reviewed manifest (SHA-256, size, code and weight licences). Pickle and executable formats are refused. Verify with: photo-defense verify-model MODEL MANIFEST."),
         small("Downloads and updates: not implemented. The application makes no network connections."),
         horizontal_rule(1),
         small("C2PA CONTENT CREDENTIALS (OPTIONAL EXPORT SIGNING)"),
-        line("Choose C2PA cert (.pem)", Message::ChooseC2paCert, format!("Certificate: {}", show(&app.c2pa_cert_path))),
-        line("Choose C2PA key (.pem)", Message::ChooseC2paKey, format!("Private key: {}", show(&app.c2pa_key_path))),
+        if cfg!(feature = "c2pa") {
+            column![
+                line("Choose C2PA cert (.pem)", Message::ChooseC2paCert, format!("Certificate: {}", show(&app.c2pa_cert_path))),
+                line("Choose C2PA key (.pem)", Message::ChooseC2paKey, format!("Private key: {}", show(&app.c2pa_key_path))),
+                small("Signing adds a C2PA manifest to the exported file after verification. It records the edits made and the certificate's identity; leave it unset to export without any metadata."),
+            ]
+            .spacing(6)
+            .into()
+        } else {
+            El::from(small("C2PA: not included in this build (`c2pa` feature)."))
+        },
     ]
     .spacing(6)
     .into()
