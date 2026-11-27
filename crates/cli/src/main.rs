@@ -192,6 +192,18 @@ enum Command {
     },
     /// Adversarial voice protection. Refuses: no validated voice model is installed.
     AudioProtect { input: PathBuf },
+    /// Transcribe speech locally with Whisper, detect spoken private data, and optionally bleep it.
+    #[cfg(feature = "stt")]
+    #[command(name = "audio-transcribe")]
+    AudioTranscribe {
+        input: PathBuf,
+        /// Local directory containing model.safetensors, config.json, and tokenizer.json.
+        #[arg(long)]
+        model: PathBuf,
+        /// Optional output WAV path with detected private speech ranges bleeped.
+        #[arg(long)]
+        redact_to: Option<PathBuf>,
+    },
     /// Scan SRT/WebVTT subtitles for private information; optionally write a redacted copy.
     Subtitles {
         input: PathBuf,
@@ -728,6 +740,36 @@ fn main() -> Result<()> {
         Command::AudioProtect { input: _ } => anyhow::bail!(
             "No validated voice-protection model is installed. The audio protection engine refuses to run without one; no file was changed."
         ),
+        #[cfg(feature = "stt")]
+        Command::AudioTranscribe {
+            input,
+            model,
+            redact_to,
+        } => {
+            let segments = photo_media::stt::transcribe(&input, &model)?;
+            let bleeps = photo_media::stt::find_private(&segments, &photo_privacy::Country::ALL);
+            let export = if let Some(out) = redact_to {
+                Some(photo_media::audio::export_wav(&input, &out, &bleeps)?)
+            } else {
+                None
+            };
+            let segment_timings: Vec<serde_json::Value> = segments
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "start_s": s.start_s,
+                        "end_s": s.end_s,
+                    })
+                })
+                .collect();
+            let report = serde_json::json!({
+                "segment_count": segments.len(),
+                "segments": segment_timings,
+                "bleep_ranges": bleeps,
+                "export": export,
+            });
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         Command::Subtitles { input, redact_to } => {
             let b = read_media(&input)?;
             let text = String::from_utf8_lossy(&b);

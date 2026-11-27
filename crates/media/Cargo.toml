@@ -19,6 +19,14 @@ symphonia = { version = "0.5", default-features = false, features = ["aac", "adp
 hound = "3.5"
 rustfft = "6.4"
 ebur128 = "0.1"
+candle-core = { version = "0.11.1", optional = true }
+candle-nn = { version = "0.11.1", optional = true }
+candle-transformers = { version = "0.11.1", optional = true }
+tokenizers = { version = "0.23", default-features = false, features = ["fancy-regex"], optional = true }
+
+[features]
+default = []
+stt = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers"]
 
 [dev-dependencies]
 image.workspace = true

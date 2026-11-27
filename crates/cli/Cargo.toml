@@ -30,3 +30,4 @@ tempfile.workspace = true
 [features]
 default = []
 experimental-clip = ["dep:photo-engine", "photo-engine/clip"]
+stt = ["photo-media/stt"]

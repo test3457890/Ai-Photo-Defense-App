@@ -17,6 +17,8 @@ pub mod detect;
 pub mod mkv;
 pub mod mp4;
 pub mod protect;
+#[cfg(feature = "stt")]
+pub mod stt;
 pub mod subtitles;
 pub mod temporal;
 
