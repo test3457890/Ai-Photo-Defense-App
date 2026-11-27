@@ -1,0 +1,61 @@
+<?xml version='1.0' encoding='windows-1252'?>
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
+    <Product
+        Id='*'
+        Name='AI Photo Defense (Unsigned Preview)'
+        UpgradeCode='D4A1F7E2-3B8C-4E19-9A21-7C6E5B4A3D21'
+        Manufacturer='AI Photo Defense Contributors'
+        Language='1033'
+        Codepage='1252'
+        Version='0.5.0'>
+
+        <Package
+            Id='*'
+            Keywords='Installer'
+            Description='AI Photo Defense local privacy and media protection (unsigned preview)'
+            Manufacturer='AI Photo Defense Contributors'
+            InstallerVersion='450'
+            Languages='1033'
+            Compressed='yes'
+            SummaryCodepage='1252'/>
+
+        <MajorUpgrade
+            Schedule='afterInstallInitialize'
+            DowngradeErrorMessage='A newer version of [ProductName] is already installed.'/>
+
+        <Media Id='1' Cabinet='media1.cab' EmbedCab='yes' DiskPrompt='CD-ROM #1'/>
+        <Property Id='DiskPrompt' Value='AI Photo Defense Installation'/>
+
+        <Directory Id='TARGETDIR' Name='SourceDir'>
+            <Directory Id='ProgramFiles64Folder' Name='PFiles'>
+                <Directory Id='APPLICATIONFOLDER' Name='AI Photo Defense'>
+                    <Component Id='Binaries' Guid='*'>
+                        <File Id='DesktopExe' Name='photo-desktop.exe' DiskId='1' Source='target\release\photo-desktop.exe' KeyPath='yes'/>
+                        <File Id='CliExe' Name='photo-defense.exe' DiskId='1' Source='target\release\photo-defense.exe'/>
+                        <File Id='LicenseFile' Name='LICENSE' DiskId='1' Source='LICENSE'/>
+                        <File Id='ThirdPartyFile' Name='THIRD_PARTY.md' DiskId='1' Source='THIRD_PARTY.md'/>
+                        <File Id='PrivacyFile' Name='PRIVACY.md' DiskId='1' Source='PRIVACY.md'/>
+                    </Component>
+                </Directory>
+            </Directory>
+            <Directory Id='ProgramMenuFolder' Name='Programs'>
+                <Directory Id='ApplicationProgramsFolder' Name='AI Photo Defense'>
+                    <Component Id='ProgramMenuShortcut' Guid='*'>
+                        <Shortcut Id='StartMenuShortcut'
+                            Name='AI Photo Defense'
+                            Description='Local privacy redaction and media protection'
+                            Target='[APPLICATIONFOLDER]photo-desktop.exe'
+                            WorkingDirectory='APPLICATIONFOLDER'/>
+                        <RemoveFolder Id='RemoveProgramMenuFolder' On='uninstall'/>
+                        <RegistryValue Root='HKCU' Key='Software\AIPhotoDefense' Name='installed' Type='integer' Value='1' KeyPath='yes'/>
+                    </Component>
+                </Directory>
+            </Directory>
+        </Directory>
+
+        <Feature Id='MainFeature' Title='AI Photo Defense' Level='1'>
+            <ComponentRef Id='Binaries'/>
+            <ComponentRef Id='ProgramMenuShortcut'/>
+        </Feature>
+    </Product>
+</Wix>

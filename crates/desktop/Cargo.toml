@@ -32,3 +32,19 @@ default = []
 voice-protect = ["photo-media/voice-protect"]
 faces = ["photo-privacy/faces"]
 c2pa = ["photo-privacy/c2pa"]
+
+[package.metadata.deb]
+maintainer = "AI Photo Defense Contributors"
+copyright = "2026 AI Photo Defense Contributors"
+license-file = ["../../LICENSE", "0"]
+depends = "$auto"
+section = "graphics"
+priority = "optional"
+assets = [
+    ["target/release/photo-desktop", "usr/bin/", "755"],
+    ["../../target/release/photo-defense", "usr/bin/", "755"],
+    ["../../packaging/linux/ai-photo-defense.desktop", "usr/share/applications/", "644"],
+    ["../../LICENSE", "usr/share/doc/ai-photo-defense/", "644"],
+    ["../../THIRD_PARTY.md", "usr/share/doc/ai-photo-defense/", "644"],
+    ["../../PRIVACY.md", "usr/share/doc/ai-photo-defense/", "644"],
+]
