@@ -5,7 +5,13 @@ fn main() -> anyhow::Result<()> {
     let frames: Vec<(u8, u8, u8)> = (0..90u32)
         .map(|i| ((i * 3) as u8, (200 - i) as u8, 90))
         .collect();
-    photo_media::video::write_synthetic_h264_mp4(std::path::Path::new(&out), 320, 240, 30, &frames)?;
+    photo_media::video::write_synthetic_h264_mp4(
+        std::path::Path::new(&out),
+        320,
+        240,
+        30,
+        &frames,
+    )?;
     println!("wrote {out}");
     Ok(())
 }
