@@ -209,6 +209,22 @@ enum Command {
         #[arg(long)]
         blur: bool,
     },
+    /// Track an object forward/backward from a keyframe in an H.264 MP4/MOV, redact, and verify every frame.
+    #[cfg(feature = "video")]
+    VideoTrack {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Initial bounding box x,y,w,h (pixels).
+        #[arg(long)]
+        rect: String,
+        /// Keyframe timestamp in seconds.
+        #[arg(long, default_value_t = 0.0)]
+        at: f64,
+        /// Apply strong blur instead of opaque black fill.
+        #[arg(long)]
+        blur: bool,
+    },
     /// Transcribe speech locally with Whisper, detect spoken private data, and optionally bleep it.
     #[cfg(feature = "stt")]
     #[command(name = "audio-transcribe")]
@@ -783,6 +799,40 @@ fn main() -> Result<()> {
             };
             let report = photo_media::video::redact_mp4(&input, &output, &[r])?;
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        #[cfg(feature = "video")]
+        Command::VideoTrack {
+            input,
+            output,
+            rect,
+            at,
+            blur,
+        } => {
+            let parts: Vec<u32> = rect
+                .split(',')
+                .map(|s| s.trim().parse::<u32>())
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("--rect must be x,y,w,h")?;
+            anyhow::ensure!(parts.len() == 4, "--rect must have 4 integers: x,y,w,h");
+            let kf = photo_media::video_track::Keyframe {
+                time_s: at,
+                x: parts[0],
+                y: parts[1],
+                width: parts[2],
+                height: parts[3],
+            };
+            let (tracked, rects) =
+                photo_media::video_track::track_object_in_mp4(&input, &[kf], blur)?;
+            let redact = photo_media::video::redact_mp4(&input, &output, &rects)?;
+            let verify = photo_media::video_track::verify_redacted_mp4(&output, &rects)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "tracked_frames": tracked.len(),
+                    "redact": redact,
+                    "frame_verify": verify,
+                }))?
+            );
         }
         #[cfg(feature = "stt")]
         Command::AudioTranscribe {

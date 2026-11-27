@@ -23,6 +23,8 @@ pub mod subtitles;
 pub mod temporal;
 #[cfg(feature = "video")]
 pub mod video;
+#[cfg(feature = "video")]
+pub mod video_track;
 
 pub use detect::{MediaKind, detect};
 

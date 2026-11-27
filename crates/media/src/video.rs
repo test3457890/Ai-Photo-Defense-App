@@ -1034,6 +1034,14 @@ pub fn redact_mp4(input: &Path, output: &Path, rects: &[RedactRect]) -> Result<V
         );
     }
 
+    let frame_verify = crate::video_track::verify_redacted_mp4(output, rects)?;
+    ensure!(
+        frame_verify.passed,
+        "Independent frame-level export verification failed ({} of {} redacted frames failed)",
+        frame_verify.failed_frames,
+        frame_verify.redacted_frames_checked
+    );
+
     Ok(VideoRedactReport {
         width: d.width,
         height: d.height,
@@ -1041,9 +1049,54 @@ pub fn redact_mp4(input: &Path, output: &Path, rects: &[RedactRect]) -> Result<V
         duration_s,
         audio_samples,
         av_sync_diff_s,
-        verified: true,
-        metadata_removed: true,
+        verified: frame_verify.passed,
+        metadata_removed: frame_verify.metadata_clean,
     })
+}
+
+pub(crate) struct LumaFrame {
+    pub pts_s: f64,
+    pub width: u32,
+    pub height: u32,
+    pub y: Vec<u8>,
+}
+
+pub(crate) fn decode_all_luma(path: &Path) -> Result<Vec<LumaFrame>> {
+    let d = demux_mp4(path)?;
+    let mut dec = Decoder::new();
+    let mut annexb = Vec::new();
+    let mut out = Vec::with_capacity(d.video_samples.len());
+    let mut push_pic = |pic: Picture| {
+        let mut y = Vec::with_capacity((d.width * d.height) as usize);
+        for row in 0..d.height as usize {
+            let start = row * pic.y_stride;
+            y.extend_from_slice(&pic.y[start..start + d.width as usize]);
+        }
+        out.push(LumaFrame {
+            pts_s: pic.pts as f64 / f64::from(d.video_timescale),
+            width: d.width,
+            height: d.height,
+            y,
+        });
+    };
+    for (idx, s) in d.video_samples.iter().enumerate() {
+        annexb.clear();
+        if idx == 0 {
+            annexb.extend_from_slice(&d.sps_pps_annexb);
+        }
+        avcc_sample_to_annexb(
+            &d.bytes[s.offset..s.offset + s.size],
+            d.nal_len_size,
+            &mut annexb,
+        )?;
+        for pic in dec.decode(&annexb, s.pts_ticks as i64)? {
+            push_pic(pic);
+        }
+    }
+    for pic in dec.flush() {
+        push_pic(pic);
+    }
+    Ok(out)
 }
 
 /// Generates a minimal valid H.264 MP4 in memory for testing.
@@ -1148,6 +1201,67 @@ pub fn write_synthetic_h264_mp4(
     let mut out = Vec::new();
     out.extend_from_slice(&ftyp);
     write_box(&mut out, b"mdat", &mdat_payload);
+    write_box(&mut out, b"moov", &moov_body);
+    std::fs::write(output, out)?;
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn write_raw_h264_mp4(
+    output: &Path,
+    width: u32,
+    height: u32,
+    fps: u32,
+    avcc: &[u8],
+    sizes: &[u32],
+    mdat_payload: &[u8],
+) -> Result<()> {
+    let ftyp = {
+        let mut b = Vec::new();
+        let mut body = Vec::new();
+        body.extend_from_slice(b"isom");
+        body.extend_from_slice(&512u32.to_be_bytes());
+        body.extend_from_slice(b"isomiso2avc1mp41");
+        write_box(&mut b, b"ftyp", &body);
+        b
+    };
+    let mdat_start = ftyp.len() + 8;
+    let mut offsets = Vec::with_capacity(sizes.len());
+    let mut cur = 0usize;
+    for &sz in sizes {
+        offsets.push((mdat_start + cur) as u32);
+        cur += sz as usize;
+    }
+    let trak = build_video_trak(&VideoTrakParams {
+        width,
+        height,
+        timescale: fps,
+        duration_ticks: sizes.len() as u64,
+        avcc,
+        sizes,
+        offsets: &offsets,
+        stts: &[(sizes.len() as u32, 1)],
+    });
+    let mut mvhd = Vec::new();
+    mvhd.extend_from_slice(&0u32.to_be_bytes());
+    mvhd.extend_from_slice(&0u32.to_be_bytes());
+    mvhd.extend_from_slice(&fps.to_be_bytes());
+    mvhd.extend_from_slice(&(sizes.len() as u32).to_be_bytes());
+    mvhd.extend_from_slice(&0x0001_0000u32.to_be_bytes());
+    mvhd.extend_from_slice(&0x0100u16.to_be_bytes());
+    mvhd.extend_from_slice(&[0u8; 10]);
+    mvhd.extend_from_slice(&[
+        0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0x40, 0x00, 0, 0,
+    ]);
+    mvhd.extend_from_slice(&[0u8; 24]);
+    mvhd.extend_from_slice(&2u32.to_be_bytes());
+    let mut moov_body = Vec::new();
+    write_full_box(&mut moov_body, b"mvhd", 0, 0, &mvhd);
+    moov_body.extend_from_slice(&trak);
+    let mut out = Vec::new();
+    out.extend_from_slice(&ftyp);
+    write_box(&mut out, b"mdat", mdat_payload);
     write_box(&mut out, b"moov", &moov_body);
     std::fs::write(output, out)?;
     Ok(())
