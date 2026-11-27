@@ -57,6 +57,7 @@ pub struct UpdateInfo {
     pub notes: String,
     pub asset_name: Option<String>,
     pub asset_url: Option<String>,
+    pub checksums_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -564,7 +565,7 @@ pub enum Message {
     CheckForUpdates,
     UpdatesChecked(Result<UpdateInfo, String>),
     OpenReleasesPage,
-    DownloadLatestInstaller,
+    DownloadAndInstallUpdate,
     InstallerDownloaded(Result<String, String>),
     LoadCalibrationSample,
     VideoSetFromNow,
@@ -3029,7 +3030,8 @@ impl App {
             Message::OpenReleasesPage => {
                 open_releases_in_browser();
             }
-            Message::DownloadLatestInstaller => {
+            Message::DownloadAndInstallUpdate => {
+                let install_now = true;
                 let Some(Ok(info)) = &self.update_status else {
                     self.note("Check for updates first.");
                     return Task::none();
@@ -3039,12 +3041,15 @@ impl App {
                     open_releases_in_browser();
                     return Task::none();
                 };
+                let sums_url = info.checksums_url.clone();
                 self.busy = Some(format!("Downloading {name}..."));
                 return Task::perform(
                     async move {
-                        tokio::task::spawn_blocking(move || download_release_asset(&name, &url))
-                            .await
-                            .unwrap_or_else(|e| Err(e.to_string()))
+                        tokio::task::spawn_blocking(move || {
+                            download_release_asset(&name, &url, sums_url.as_deref(), install_now)
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
                     },
                     Message::InstallerDownloaded,
                 );
@@ -4256,6 +4261,7 @@ fn check_github_release() -> Result<UpdateInfo, String> {
     };
     let mut asset_name = None;
     let mut asset_url = None;
+    let mut checksums_url = None;
     if let Some(assets) = val.get("assets").and_then(|a| a.as_array()) {
         for a in assets {
             let name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
@@ -4263,10 +4269,11 @@ fn check_github_release() -> Result<UpdateInfo, String> {
                 .get("browser_download_url")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            if name.ends_with(wanted_ext) && dl.starts_with("https://") {
+            if name.ends_with(wanted_ext) && dl.starts_with("https://") && asset_url.is_none() {
                 asset_name = Some(name.to_string());
                 asset_url = Some(dl.to_string());
-                break;
+            } else if name == "SHA256SUMS.txt" && dl.starts_with("https://") {
+                checksums_url = Some(dl.to_string());
             }
         }
     }
@@ -4281,10 +4288,16 @@ fn check_github_release() -> Result<UpdateInfo, String> {
         notes,
         asset_name,
         asset_url,
+        checksums_url,
     })
 }
 
-fn download_release_asset(name: &str, url: &str) -> Result<String, String> {
+fn download_release_asset(
+    name: &str,
+    url: &str,
+    sums_url: Option<&str>,
+    install_now: bool,
+) -> Result<String, String> {
     if !url.starts_with("https://github.com/")
         && !url.starts_with("https://objects.githubusercontent.com/")
     {
@@ -4318,8 +4331,61 @@ fn download_release_asset(name: &str, url: &str) -> Result<String, String> {
     }
     let bytes = std::fs::read(&dest).map_err(|e| format!("Read downloaded file: {e}"))?;
     let fp = photo_core::fingerprint(&bytes);
+
+    let mut verified_note = "SHA-256 computed".to_string();
+    if let Some(s_url) = sums_url
+        && (s_url.starts_with("https://github.com/")
+            || s_url.starts_with("https://objects.githubusercontent.com/"))
+        && let Ok(s_out) = std::process::Command::new("curl")
+            .args(["-fsSL", "--max-time", "15", "-A", &ua, s_url])
+            .output()
+        && s_out.status.success()
+    {
+        let text = String::from_utf8_lossy(&s_out.stdout);
+        for line in text.lines() {
+            let mut parts = line.split_whitespace();
+            if let (Some(expected), Some(fname)) = (parts.next(), parts.next())
+                && fname.trim_start_matches('*') == safe_name
+            {
+                if !expected.eq_ignore_ascii_case(&fp.sha256) {
+                    let _ = std::fs::remove_file(&dest);
+                    return Err(format!(
+                        "SHA-256 verification FAILED for {safe_name}! File removed for safety."
+                    ));
+                }
+                verified_note = "SHA-256 VERIFIED against SHA256SUMS.txt".into();
+                break;
+            }
+        }
+    }
+
+    if install_now {
+        #[cfg(target_os = "windows")]
+        if safe_name.ends_with(".msi") {
+            let _ = std::process::Command::new("msiexec")
+                .arg("/i")
+                .arg(&dest)
+                .spawn()
+                .map_err(|e| format!("Failed to launch installer: {e}"))?;
+        } else {
+            let _ = std::process::Command::new("cmd")
+                .args(["/c", "start", ""])
+                .arg(&dest)
+                .spawn();
+        }
+        #[cfg(target_os = "macos")]
+        let _ = std::process::Command::new("open").arg(&dest).spawn();
+        #[cfg(target_os = "linux")]
+        let _ = std::process::Command::new("xdg-open").arg(&dest).spawn();
+        return Ok(format!(
+            "Installer launched ({verified_note}): {} · SHA-256: {}",
+            dest.display(),
+            fp.sha256
+        ));
+    }
+
     Ok(format!(
-        "Downloaded {} ({} bytes) · SHA-256: {}",
+        "Downloaded {} ({} bytes, {verified_note}) · SHA-256: {}",
         dest.display(),
         bytes.len(),
         fp.sha256

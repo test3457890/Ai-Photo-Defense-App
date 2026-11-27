@@ -2882,10 +2882,10 @@ fn update_status_block(app: &App) -> El<'_> {
         && info.asset_url.is_some()
     {
         buttons = buttons.push(btn(
-            "Download Installer to Downloads",
+            "Download & Install Update",
             app.busy
                 .is_none()
-                .then_some(Message::DownloadLatestInstaller),
+                .then_some(Message::DownloadAndInstallUpdate),
         ));
     }
 
