@@ -1829,7 +1829,7 @@ fn technical(app: &App) -> El<'_> {
         TechPage::Validation => validation(app),
         TechPage::Forensics => forensics(app),
         TechPage::Lab => lab(app),
-        TechPage::Models => models(),
+        TechPage::Models => models(app),
         TechPage::History => history(app),
         TechPage::Formats => formats(app),
     };
@@ -2460,7 +2460,23 @@ fn media_panel<'a>(app: &'a App, m: &'a MediaEntry, compact: bool) -> El<'a> {
         .spacing(8)
         .align_y(Alignment::Center),
     );
-    c = c.push(small("AI voice / video protection: unavailable. No validated model is installed, so no adversarial changes are made and none are claimed."));
+    if info.kind == MediaKind::Audio {
+        let model_ready = app.voice_model_dir.is_some();
+        c = c.push(
+            row![
+                btn("Protect voice", (idle && model_ready).then_some(Message::ProtectVoice)),
+                small(if model_ready {
+                    "Uses local ECAPA-TDNN model (self-encoder cosine drop; external transfer unverified)."
+                } else {
+                    "Set a voice model folder in Technical > Model Library to enable."
+                }),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        );
+    } else if info.kind == MediaKind::Video {
+        c = c.push(small("AI video protection: unavailable. No validated model is installed, so no adversarial changes are made and none are claimed."));
+    }
     if let Some(out) = &m.output {
         c = c.push(
             container(small(format!("Saved and verified: {}", out.display())))
@@ -2526,9 +2542,19 @@ fn media_panel<'a>(app: &'a App, m: &'a MediaEntry, compact: bool) -> El<'a> {
     c.into()
 }
 
-fn models() -> El<'static> {
+fn models(app: &App) -> El<'_> {
+    let voice_dir = app
+        .voice_model_dir
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "none".into());
     column![
-        small("Installed models: none."),
+        row![
+            btn("Choose voice model folder", Some(Message::ChooseVoiceModelFolder)),
+            small(format!("Voice model folder: {voice_dir}")),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
         small("Face, person, object, document, segmentation and OCR detectors need licence-reviewed local models (see docs/research/MODEL_LICENSES.md)."),
         small("Accepted formats: SafeTensors with an independently reviewed manifest (SHA-256, size, code and weight licences). Pickle and executable formats are refused. Verify with: photo-defense verify-model MODEL MANIFEST."),
         small("Downloads and updates: not implemented. The application makes no network connections."),

@@ -190,8 +190,17 @@ enum Command {
         #[arg(long)]
         bleep: Vec<String>,
     },
-    /// Adversarial voice protection. Refuses: no validated voice model is installed.
-    AudioProtect { input: PathBuf },
+    /// Adversarial voice protection. Refuses without a local ECAPA model directory.
+    AudioProtect {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Local directory containing model.safetensors (and optional manifest.json).
+        #[arg(long)]
+        model: Option<PathBuf>,
+        #[arg(long, default_value = "Balanced Protection")]
+        profile: String,
+    },
     /// Transcribe speech locally with Whisper, detect spoken private data, and optionally bleep it.
     #[cfg(feature = "stt")]
     #[command(name = "audio-transcribe")]
@@ -737,9 +746,35 @@ fn main() -> Result<()> {
                 )?)?
             );
         }
-        Command::AudioProtect { input: _ } => anyhow::bail!(
-            "No validated voice-protection model is installed. The audio protection engine refuses to run without one; no file was changed."
-        ),
+        Command::AudioProtect {
+            input,
+            output,
+            model,
+            profile,
+        } => {
+            let Some(model_dir) = model else {
+                anyhow::bail!(
+                    "No validated voice-protection model is installed. The audio protection engine refuses to run without one; no file was changed."
+                );
+            };
+            #[cfg(feature = "voice-protect")]
+            {
+                let out = output.context("Missing -o/--output WAV path")?;
+                let settings = photo_media::protect::Settings::profile(&profile)
+                    .with_context(|| format!("Unknown audio protection profile: {profile}"))?;
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                let report =
+                    photo_media::ecapa::protect_wav(&input, &out, &model_dir, settings, &cancel)?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+            #[cfg(not(feature = "voice-protect"))]
+            {
+                let _ = (input, output, model_dir, profile);
+                anyhow::bail!(
+                    "Built without the `voice-protect` feature; rebuild with `--features voice-protect`."
+                );
+            }
+        }
         #[cfg(feature = "stt")]
         Command::AudioTranscribe {
             input,

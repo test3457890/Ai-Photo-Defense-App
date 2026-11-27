@@ -75,7 +75,7 @@ Read from each project's official page, repository, model card or paper by the G
 | DiffusionGuard (ICLR 2025) | - | uses Stable Diffusion inpainting | |
 | Fawkes (USENIX Security 2020) | BSD-3-Clause ("personal privacy or academic research") | - | TensorFlow |
 | Glaze, Nightshade | closed source | not distributed | cannot be integrated |
-| **SpeechBrain ECAPA-TDNN** (spkrec-ecapa-voxceleb) | **Apache-2.0** | **Apache-2.0** (Hugging Face) | **licence-compatible speaker encoder** for a voice-protection objective; weights are a PyTorch checkpoint and would need conversion to SafeTensors |
+| **SpeechBrain ECAPA-TDNN** (spkrec-ecapa-voxceleb) | **Apache-2.0** | **Apache-2.0** (Hugging Face) | **Implemented behind `voice-protect`** (`crates/media/src/ecapa.rs`, offline converter `tools/convert_ecapa.py`); parity and external cloner transfer remain unverified until run against converted weights |
 | WavLM base-plus-sv | CC-BY-SA-3.0 | CC-BY-SA-3.0 | share-alike obligations |
 | Resemblyzer (GE2E) | Apache-2.0 | Apache-2.0 (in repo) | second licence-compatible speaker encoder |
 | **OpenAI Whisper** | **MIT** | **MIT** | **licence-compatible speech-to-text** for detecting spoken names and numbers; candle (already a dependency) has a Rust Whisper implementation |
