@@ -18,6 +18,8 @@ jobs:
           persist-credentials: false
       - run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt --component clippy
       - run: cargo fmt --all --check
+      - name: Linux audio headers (ALSA, used only for local A/B playback)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
   platform:
     strategy:
@@ -43,6 +45,9 @@ jobs:
           persist-credentials: false
       - run: rustup toolchain install 1.100.0 --profile minimal
       - run: rustup target add ${{ matrix.target }} --toolchain 1.100.0
+      - name: Linux audio headers (ALSA, used only for local A/B playback)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
       - name: Native host tests
         run: cargo test --locked --workspace --all-features
       - name: Build target applications

@@ -1,4 +1,11 @@
-# Part 4 roadmap: video and multimedia (not started)
+# Deferred concept: general-purpose video editor (archived)
+
+> **Status: archived, not an active requirement.** The owner's Part 4 specification
+> ([PART4_SPECIFICATION.md](../PART4_SPECIFICATION.md), section 2) replaced the earlier proposal for a
+> professional video editing platform with a multimedia *protection* platform. Timelines, clip editing
+> and other editor features must not be built. This note is kept only for its architecture research.
+
+## Original Part 3 note
 
 Video editing, audio editing and timelines are deliberately out of scope for Part 3. This file keeps the research so Part 4 does not need a rewrite.
 

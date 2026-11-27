@@ -7,7 +7,10 @@
 //!
 //! Heavy work (decode, render, scan, export) runs on blocking worker threads. Interactive
 //! previews render a proxy (<= 1600 px) of the photograph; exports always render full size.
+// Release builds are GUI-only on Windows: no console window opens beside the application.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod app;
+mod clip;
 mod theme;
 mod views;
 mod widgets;

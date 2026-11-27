@@ -15,11 +15,22 @@ pub struct Manifest {
     pub source_url: String,
     pub code_license: String,
     pub weights_license: String,
+    /// A reviewer confirmed the licence permits running these weights locally in this app.
+    pub local_use_approved: bool,
+    /// A reviewer confirmed the licence permits redistributing the file (bundling or mirroring).
+    /// Not needed for local verification; required before any downloader or installer ships it.
+    #[serde(default)]
     pub redistribution_approved: bool,
+    #[serde(default)]
+    pub commercial_use_permitted: bool,
 }
 impl Manifest {
     pub fn validate(&self) -> Result<()> {
-        ensure!(self.schema_version == 1, "Unknown manifest schema");
+        ensure!(
+            self.schema_version == 2,
+            "Unsupported manifest schema {} (version 2 separates local-use and redistribution approval)",
+            self.schema_version
+        );
         ensure!(
             !self.id.is_empty()
                 && self.id.len() <= 100
@@ -53,8 +64,8 @@ impl Manifest {
             "Separate code and weights license records required"
         );
         ensure!(
-            self.redistribution_approved,
-            "Weights have not been approved for installation"
+            self.local_use_approved,
+            "Weights have not been approved for local use"
         );
         Ok(())
     }
@@ -107,7 +118,7 @@ mod tests {
     use super::*;
     fn manifest() -> Manifest {
         Manifest {
-            schema_version: 1,
+            schema_version: 2,
             id: "example".into(),
             filename: "weights.safetensors".into(),
             sha256: "a".repeat(64),
@@ -115,7 +126,9 @@ mod tests {
             source_url: "https://example.org/weights".into(),
             code_license: "MIT".into(),
             weights_license: "MIT".into(),
-            redistribution_approved: true,
+            local_use_approved: true,
+            redistribution_approved: false,
+            commercial_use_permitted: false,
         }
     }
     #[test]
@@ -131,8 +144,18 @@ mod tests {
             assert!(m.validate().is_err());
         }
         let mut m = manifest();
-        m.redistribution_approved = false;
+        assert!(
+            m.validate().is_ok(),
+            "redistribution is not needed for local use"
+        );
+        m.local_use_approved = false;
         assert!(m.validate().is_err());
+        m.local_use_approved = true;
+        m.schema_version = 1;
+        assert!(
+            m.validate().is_err(),
+            "v1 manifests conflated approvals and are refused"
+        );
     }
     #[test]
     fn integrity_before_parse() {

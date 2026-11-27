@@ -24,7 +24,14 @@ pub struct CollectOptions {
     pub max_depth: usize,
     pub max_files: usize,
     pub exclude: Vec<PathBuf>,
+    /// Also collect audio, video and subtitle files (desktop media workflow).
+    pub include_media: bool,
 }
+pub const MEDIA_EXTENSIONS: [&str; 28] = [
+    "mp4", "m4v", "mov", "m4a", "3gp", "mkv", "webm", "avi", "mpg", "mpeg", "ts", "mts", "m2ts",
+    "wav", "flac", "mp3", "ogg", "opus", "aac", "aif", "aiff", "aifc", "caf", "w64", "mp2", "srt",
+    "vtt", "gif",
+];
 impl Default for CollectOptions {
     fn default() -> Self {
         Self {
@@ -32,6 +39,7 @@ impl Default for CollectOptions {
             max_depth: 16,
             max_files: 10_000,
             exclude: vec![],
+            include_media: false,
         }
     }
 }
@@ -117,10 +125,11 @@ fn walk(
                     .push((path, "maximum folder depth reached".into()));
             }
         } else if meta.is_file() {
-            let ok = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()));
+            let ok = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                let e = e.to_ascii_lowercase();
+                EXTENSIONS.contains(&e.as_str())
+                    || (opts.include_media && MEDIA_EXTENSIONS.contains(&e.as_str()))
+            });
             if ok {
                 out.files.push(path);
                 ensure!(
@@ -380,6 +389,26 @@ mod tests {
         assert!(c.files.is_empty());
         assert_eq!(c.skipped.len(), 2);
     }
+    #[test]
+    fn media_is_collected_only_when_requested() {
+        let d = tempfile::tempdir().unwrap();
+        write_png(&d.path().join("a.png"), 1);
+        std::fs::write(d.path().join("talk.WAV"), b"RIFF").unwrap();
+        std::fs::write(d.path().join("clip.mp4"), b"x").unwrap();
+        std::fs::write(d.path().join("notes.txt"), b"x").unwrap();
+        let photos = collect(&[d.path().to_path_buf()], &CollectOptions::default()).unwrap();
+        assert_eq!(photos.files.len(), 1);
+        let all = collect(
+            &[d.path().to_path_buf()],
+            &CollectOptions {
+                include_media: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(all.files.len(), 3);
+    }
+
     #[test]
     fn batch_review_duplicates_errors_and_cancel() {
         let d = tempfile::tempdir().unwrap();

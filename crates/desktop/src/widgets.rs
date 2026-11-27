@@ -291,6 +291,61 @@ pub fn label_value<'a, M: 'a>(label: &'a str, value: String) -> Element<'a, M> {
     .into()
 }
 
+/// Waveform image from per-column (min, max) pairs of the mono mix.
+pub fn waveform_image(cols: &[(f32, f32)], w: u32, h: u32) -> RgbaImage {
+    let mut img = RgbaImage::from_pixel(w, h, Rgba([24, 25, 27, 255]));
+    let mid = h as f32 / 2.;
+    for y in [h / 2] {
+        for x in 0..w {
+            img.put_pixel(x, y, Rgba([60, 62, 66, 255]));
+        }
+    }
+    if cols.is_empty() {
+        return img;
+    }
+    for x in 0..w {
+        let a = (x as usize * cols.len()) / w as usize;
+        let b = (((x as usize + 1) * cols.len()) / w as usize)
+            .max(a + 1)
+            .min(cols.len());
+        let (lo, hi) = cols[a..b]
+            .iter()
+            .fold((0f32, 0f32), |(l, h), c| (l.min(c.0), h.max(c.1)));
+        let y0 = (mid - hi.clamp(-1., 1.) * mid).round() as u32;
+        let y1 = (mid - lo.clamp(-1., 1.) * mid).round() as u32;
+        for y in y0.min(h - 1)..=y1.min(h - 1) {
+            img.put_pixel(x, y, Rgba([110, 170, 230, 255]));
+        }
+    }
+    img
+}
+
+/// Spectrogram image: columns of band levels in dB, low frequencies at the bottom.
+pub fn spectrogram_image(cols: &[Vec<f32>], w: u32, h: u32) -> RgbaImage {
+    let mut img = RgbaImage::from_pixel(w, h, Rgba([10, 10, 14, 255]));
+    if cols.is_empty() || cols[0].is_empty() {
+        return img;
+    }
+    let bands = cols[0].len();
+    let max = cols.iter().flatten().copied().fold(f32::MIN, f32::max);
+    for x in 0..w {
+        let c = &cols[(x as usize * cols.len()) / w as usize];
+        for y in 0..h {
+            let band = ((h - 1 - y) as usize * bands) / h as usize;
+            // 70 dB display range below the loudest bin.
+            let t = ((c[band.min(bands - 1)] - (max - 70.)) / 70.).clamp(0., 1.);
+            let px = [
+                (t * 255.) as u8,
+                (t * t * 200.) as u8,
+                ((1. - t) * 90. * t + t.powi(4) * 160.) as u8,
+                255,
+            ];
+            img.put_pixel(x, y, Rgba(px));
+        }
+    }
+    img
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -230,6 +230,21 @@ pub fn flat_selected(t: &Theme, _s: button::Status) -> button::Style {
         ..Default::default()
     }
 }
+/// Text-input style without frame or padding; the frame comes from `field_frame`.
+pub fn input_bare(t: &Theme, s: text_input::Status) -> text_input::Style {
+    let mut d = input(t, s);
+    d.border = iced::Border::default();
+    d.background = Background::Color(iced::Color::TRANSPARENT);
+    d
+}
+/// Frame for text fields (see `views::field`).
+pub fn field_frame(t: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(surface(t, 0))),
+        border: border(line(t)),
+        ..Default::default()
+    }
+}
 pub fn input(t: &Theme, s: text_input::Status) -> text_input::Style {
     let mut d = text_input::default(t, s);
     d.border = border(if matches!(s, text_input::Status::Focused) {

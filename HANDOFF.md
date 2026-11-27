@@ -1,5 +1,66 @@
 # AI Photo Defense development handoff
 
+## Part 5 increment (2026-11-26, Claude Opus 5.5)
+
+Branch `claude/part5-release`, on top of Part 4. The owner asked for Parts 2 to 5 to be merged into `main` so the review can start from one branch. Specification as received (cut off in section 8): [docs/PART5_SPECIFICATION.md](docs/PART5_SPECIFICATION.md). Master checklist and sweep results: [docs/IMPLEMENTATION_MATRIX.md#part-5](docs/IMPLEMENTATION_MATRIX.md#part-5).
+
+- **Fixed:** text-field overflow reported with screenshots by the owner (`crates/desktop/src/clip.rs`, `views::field`). Verified in the release build while typing and after leaving the field.
+- **Added:** weak-concealment warnings (inspector, pre-export review, export report) with a recoverability test; AIFF/CAF/MP1/MP2/ADPCM decoding; invisible watermark (`photo_edit::watermark`, CLI only).
+- **Research:** licence check of 25 projects, done by the Google Antigravity agent on the owner's machine at Claude's request, reviewed and condensed into the research register.
+- **Verified:** fmt, clippy `-D warnings`, all tests, `cargo audit` (no vulnerabilities), `cargo deny`, release build, GUI retest on Windows 10.
+- **Still not built (reasons in the checklist):** voice-cloning protection and spoken-content detection (licence-compatible models now identified: SpeechBrain ECAPA / Resemblyzer, Whisper; the candle ports and validation are the next work), video frame decoding and protection, Opus/WMA decoding, face detection, C2PA signing, installers and signed releases, GUI runtime checks on Linux and macOS.
+
+## Part 4 increment (2026-11-26, Claude Opus 5.5)
+
+Branch `claude/part4-multimedia`, stacked on `claude/part3-studio` (PR #8), which is stacked on `claude/part2-privacy-editing` (PR #7). None is merged: the owner asked to wait for an independent review. Starting commit `5914128ab01d17eb61ff9a8888e2cc9b56128002`. Specification (verbatim): [docs/PART4_SPECIFICATION.md](docs/PART4_SPECIFICATION.md); status: [docs/IMPLEMENTATION_MATRIX.md](docs/IMPLEMENTATION_MATRIX.md#part-4). The earlier video-editor idea is archived in [docs/archive/DEFERRED_VIDEO_EDITOR_CONCEPT.md](docs/archive/DEFERRED_VIDEO_EDITOR_CONCEPT.md).
+
+### Problems found in Parts 1 to 3 and fixed here
+
+1. Release desktop builds opened an empty console window next to the GUI on Windows (missing `windows_subsystem`).
+2. Long values in text fields (output folder, import path) were painted over neighbouring widgets once unfocused: iced 0.13 only clips text-field text while selecting, and the tiny-skia damage redraw ignores container clipping. Inputs are now wrapped in a clipped scrollable layer; the Essential output folder is a shortened, clickable label.
+3. README documented `--workspace professional`; the actual flag is `--mode professional` (the old form was treated as a file name).
+4. Model manifests mixed "may run locally" with "may be redistributed"; schema 2 separates `local_use_approved`, `redistribution_approved` and `commercial_use_permitted`.
+5. A crafted WAV made the Symphonia decoder panic (found by our own mutation test while adding audio); contained with `catch_unwind` and bounded parameters.
+
+### What was added
+
+| Area | Content |
+|---|---|
+| `photo-media` (new crate) | `detect` (content-based detection of about 45 formats, extension mismatch), `mp4` (bounded ISO-BMFF parser, track/codec/metadata inspection, lossless metadata removal with offset rewriting and chunk verification), `mkv` (EBML parser, tracks, tags, attachments, chapters; inspection only), `audio` (Symphonia streaming decoder with panic containment, EBU R128 analysis, waveform, spectrogram, comparison, mute/bleep WAV export with sample-exact verification), `protect` (psychoacoustically masked projected-gradient audio engine that refuses to run without a validated objective), `subtitles` (SRT/WebVTT parse, Privacy Scan, redaction), `temporal` (frame flicker metrics for future video protection) |
+| `photo-core` / `photo-privacy` | BMP and GIF import; GIF/BMP metadata checks (animation, comments, XMP, trailing data); mutation fuzz test across image formats |
+| `photo-pipeline` | `CollectOptions::include_media` so folder imports can include media |
+| `photo-desktop` | Media in all three modes: Essential rows and side panel; Professional Library > MEDIA with a media viewer (info, privacy metadata, waveform, spectrogram, loudness, segment editor, export, comparison); loudness-matched A/B playback through rodio; Technical > Format Inspection |
+| CLI | `media-inspect`, `strip-video`, `audio-analyze`, `audio-compare`, `audio-export`, `audio-protect` (refuses), `subtitles` |
+| CI | ALSA headers installed on Linux (needed by cpal for playback) |
+| Docs | FORMAT_COMPATIBILITY, guides/AUDIO_PROTECTION, guides/VIDEO_PROTECTION, research/MULTIMEDIA_RESEARCH_REGISTER, Part 4 sections in IMPLEMENTATION_MATRIX, SECURITY_REVIEW, TESTING, BENCHMARKS, CHANGELOG 0.4.0, THIRD_PARTY |
+
+### Verified on Windows 10 x64 (Rust 1.100.0)
+
+- `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`: pass.
+- `cargo test --workspace`: 88 passed (89 with `--all-features`), 0 failed.
+- `cargo audit`: no vulnerabilities; 16 informational warnings, all pre-existing (none from the new crates). `cargo deny check`: advisories, bans, licences, sources ok.
+- `cargo build --release` of desktop and CLI: pass.
+- Real GUI run (release build) with a WAV, an MP4 carrying GPS/device/XMP/timed metadata and an SRT with an e-mail address and phone number: import by folder, all three modes, bleep 1.5 to 2.5 s and export, A/B playback, MP4 metadata removal, subtitle redaction. Outputs checked independently with the CLI (MP4: no remaining findings, video and audio tracks kept; WAV: 122,868 frames in and out, segmental SNR 64.1 dB; SRT: cue 2 `[redacted]`). Screenshots `docs/screenshots/part4-*.png`.
+- Benchmarks (10-minute 48 kHz stereo WAV): analyse 3.4 s, redact and export with full verification 2.0 s, compare 0.6 s.
+
+### Not done or blocked (never present as working)
+
+- **Video decoding, preview, re-encoding, frame redaction and video protection.** No reviewed decoder. FilmCraft (MIT OR Apache-2.0, pure-Rust H.264 encode/decode, HEVC/AV1 decode per its README) is the leading candidate; it needs a security, correctness and patent review before it touches untrusted files.
+- **Voice-cloning / music protection.** The engine works mechanically (tests) but no speaker-encoder or synthesis objective with acceptable code and weight licences is installed, so it refuses to run. AntiFake's repository states no licence; its weights are external. Any future claim must survive a De-AntiFake-style purification test.
+- **Automatic spoken-content detection** (needs a local speech-to-text model), **moving-object redaction**, **watermarking / C2PA**, **compression-resilience testing**, **encoded audio export** (MP3/AAC/FLAC/Opus), **AIFF/Opus/WMA/AC-3 decoding**, **Matroska metadata removal**, **batch media export**, **GPU**.
+- Media files are not saved in projects or the catalog yet; they are session-only.
+- Linux and macOS: compile in CI only; no runtime test.
+- Only synthetic MP4/MKV files were available; no real phone or camera video was tested.
+
+### Suggested review focus for ChatGPT / Codex
+
+1. `crates/media/src/mp4.rs` `strip`: offset rewriting, `co64` handling, `tref` removal, and whether any metadata location is missed (nested `udta`/`meta` inside `trak` are dropped and covered by the synthetic test; vendor boxes from real Sony, GoPro, DJI or Android files are untested).
+2. `crates/media/src/audio.rs`: decoder panic containment, the verification in `export_wav`, gain and fade maths.
+3. `crates/media/src/protect.rs`: masking-threshold model; whether the projection is correct; refusal path.
+4. `crates/desktop/src/app.rs`: media import routing by content, background tasks, playback lifetime.
+5. Documentation honesty: FORMAT_COMPATIBILITY.md and the research register.
+
+
 ## Part 3 increment (2026-11-26, Claude Opus 5.5)
 
 Branch `claude/part3-studio`, stacked on `claude/part2-privacy-editing` (PR #7, open and not yet merged). Starting commit `7b0e8b22b11b7191632974552298ec539e5ac51a`. Specification: [docs/PART3_SPECIFICATION.md](docs/PART3_SPECIFICATION.md); status: [docs/IMPLEMENTATION_MATRIX.md](docs/IMPLEMENTATION_MATRIX.md#part-3).

@@ -41,8 +41,28 @@ fn sep<'a>() -> El<'a> {
         })
         .into()
 }
+/// Text field with its frame drawn by a container and the text inside a clipped layer.
+/// iced 0.13 (tiny-skia) does not clip text-input text to the box once the field loses focus,
+/// so long values spilled over neighbouring widgets. Here the border belongs to the outer
+/// container and the text is confined to the inner area, so it can never cross the frame.
+fn field<'a>(input: iced::widget::TextInput<'a, Message>) -> iced::widget::Container<'a, Message> {
+    container(crate::clip::clip(input.padding(0).style(theme::input_bare)))
+        .padding([3, 6])
+        .style(theme::field_frame)
+}
+/// Shortens a path from the left so its most specific part stays visible.
+fn ellipsize_left(s: &str, max: usize) -> String {
+    let n = s.chars().count();
+    if n <= max {
+        s.to_string()
+    } else {
+        format!("...{}", s.chars().skip(n - (max - 3)).collect::<String>())
+    }
+}
 fn mib(b: u64) -> String {
-    if b >= 1 << 30 {
+    if b < 1 << 20 {
+        format!("{:.1} KiB", b as f64 / 1024.)
+    } else if b >= 1 << 30 {
         format!("{:.2} GiB", b as f64 / (1u64 << 30) as f64)
     } else {
         format!("{:.1} MiB", b as f64 / 1_048_576.)
@@ -440,13 +460,17 @@ fn essential(app: &App) -> El<'_> {
         )
         .text_size(FONT)
         .padding([3, 6]),
-        text_input("Output folder", &app.output_dir)
-            .on_input(Message::OutputDir)
-            .size(FONT)
-            .width(220)
-            .padding([3, 6])
-            .style(theme::input),
-        btn("...", Some(Message::BrowseOutput)),
+        // A label, not a text field: iced 0.13 on tiny-skia can paint a long unfocused
+        // text-field value over neighbouring widgets. Typed entry is in Professional > Export.
+        button(small(if app.output_dir.trim().is_empty() {
+            "Choose output folder...".to_string()
+        } else {
+            ellipsize_left(app.output_dir.trim(), 36)
+        }))
+        .width(260)
+        .padding([4, 8])
+        .style(theme::tool)
+        .on_press(Message::BrowseOutput),
         button(text("Process all").size(FONT))
             .padding([3, 14])
             .style(theme::primary)
@@ -497,8 +521,51 @@ fn essential(app: &App) -> El<'_> {
                 .on_press(Message::Select(i)),
         );
     }
-    let list: El = if app.entries.is_empty() {
-        container(column![t("Drop photographs or folders here"), small("JPEG, PNG, WebP, TIFF and camera RAW (embedded preview). Originals are never modified.")].spacing(4).align_x(Alignment::Center)).center(Length::Fill).into()
+    for (i, m) in app.media.iter().enumerate() {
+        let kind = format!("{:?}", m.kind());
+        let line = row![
+            small(if m.info.as_ref().is_some_and(|i| !i.findings.is_empty()) {
+                "!"
+            } else {
+                "-"
+            })
+            .width(18),
+            small(m.name.as_str()).width(Length::FillPortion(4)),
+            small(format!(
+                "{kind} {}{}",
+                m.info.as_ref().map(|i| i.container.as_str()).unwrap_or(""),
+                m.info
+                    .as_ref()
+                    .and_then(|i| i.duration_s)
+                    .map(|d| format!(" · {d:.1} s"))
+                    .unwrap_or_default()
+            ))
+            .width(110),
+            small(mib(m.bytes)).width(80),
+            small(match m.info.as_ref().map(|i| i.findings.len()) {
+                None => "Not inspected".to_string(),
+                Some(0) => "No findings".to_string(),
+                Some(n) => format!("{n} finding(s)"),
+            })
+            .width(Length::FillPortion(2)),
+            small(m.status.as_str()).width(Length::FillPortion(2)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        rows = rows.push(
+            button(line)
+                .width(Length::Fill)
+                .padding([4, 8])
+                .style(if app.focus_media && app.selected_media == Some(i) {
+                    theme::flat_selected
+                } else {
+                    theme::flat
+                })
+                .on_press(Message::SelectMedia(i)),
+        );
+    }
+    let list: El = if app.entries.is_empty() && app.media.is_empty() {
+        container(column![t("Drop photographs or folders here"), small("Photographs (JPEG, PNG, WebP, TIFF, GIF, BMP, camera RAW preview), audio (WAV, FLAC, MP3, AAC/M4A, Ogg Vorbis), video (MP4, MOV, 3GP metadata removal; MKV/WebM inspection) and SRT/WebVTT subtitles. Originals are never modified.")].spacing(4).align_x(Alignment::Center)).center(Length::Fill).into()
     } else {
         scrollable(rows).height(Length::Fill).into()
     };
@@ -530,7 +597,18 @@ fn essential(app: &App) -> El<'_> {
         );
     }
     let mut r = row![col.width(Length::Fill)];
-    if let Some(e) = app.current() {
+    if let Some(m) = app
+        .focus_media
+        .then(|| app.selected_media.and_then(|i| app.media.get(i)))
+        .flatten()
+    {
+        r = r.push(vertical_rule(1)).push(
+            container(scrollable(media_panel(app, m, true)))
+                .padding(10)
+                .width(380)
+                .style(theme::panel),
+        );
+    } else if let Some(e) = app.current() {
         let preview: El = match &e.edited {
             Some(ed) => image(ed.handle.clone())
                 .width(Length::Fill)
@@ -622,12 +700,14 @@ fn library(app: &App) -> El<'_> {
         ]
         .spacing(4),
         row![
-            text_input("Path to photo or folder", &app.input_path)
-                .on_input(Message::InputPath)
-                .on_submit(Message::ImportPath)
-                .size(FONT)
-                .padding([3, 6])
-                .style(theme::input),
+            field(
+                text_input("Path to photo or folder", &app.input_path)
+                    .on_input(Message::InputPath)
+                    .on_submit(Message::ImportPath)
+                    .size(FONT)
+                    .padding([3, 6])
+                    .style(theme::input)
+            ),
             btn("Add", app.busy.is_none().then_some(Message::ImportPath))
         ]
         .spacing(4),
@@ -660,17 +740,40 @@ fn library(app: &App) -> El<'_> {
         );
     }
     col = col.push(scrollable(list).height(Length::FillPortion(3)));
+    if !app.media.is_empty() {
+        let mut ml = Column::new().spacing(0);
+        for (i, m) in app.media.iter().enumerate() {
+            ml = ml.push(
+                button(column![
+                    small(m.name.as_str()),
+                    small(format!("{:?} · {}", m.kind(), m.status))
+                ])
+                .width(Length::Fill)
+                .padding([3, 6])
+                .style(if app.focus_media && app.selected_media == Some(i) {
+                    theme::flat_selected
+                } else {
+                    theme::flat
+                })
+                .on_press(Message::SelectMedia(i)),
+            );
+        }
+        col = col
+            .push(horizontal_rule(1))
+            .push(small("MEDIA"))
+            .push(scrollable(ml).height(Length::FillPortion(1)));
+    }
     col = col.push(horizontal_rule(1)).push(small("CATALOG"));
     if app.catalog.is_none() {
         col = col.push(small("Catalog unavailable (safe mode or database error)."));
     } else {
-        col = col.push(
+        col = col.push(field(
             text_input("Search name, camera, tag", &app.lib_search)
                 .on_input(Message::LibSearch)
                 .size(FONT)
                 .padding([3, 6])
                 .style(theme::input),
-        );
+        ));
         col = col.push(
             row![
                 small("Min rating"),
@@ -717,12 +820,14 @@ fn library(app: &App) -> El<'_> {
         if app.current().and_then(|e| e.catalog_id).is_some() {
             col = col.push(
                 row![
-                    text_input("Add tag to photo", &app.tag_input)
-                        .on_input(Message::TagInput)
-                        .on_submit(Message::ApplyTag)
-                        .size(FONT)
-                        .padding([3, 6])
-                        .style(theme::input),
+                    field(
+                        text_input("Add tag to photo", &app.tag_input)
+                            .on_input(Message::TagInput)
+                            .on_submit(Message::ApplyTag)
+                            .size(FONT)
+                            .padding([3, 6])
+                            .style(theme::input)
+                    ),
                     btn("Tag", Some(Message::ApplyTag))
                 ]
                 .spacing(4),
@@ -827,6 +932,17 @@ fn tool_bar(app: &App) -> El<'_> {
 }
 
 pub fn viewer(app: &App) -> El<'_> {
+    if let Some(m) = app
+        .focus_media
+        .then(|| app.selected_media.and_then(|i| app.media.get(i)))
+        .flatten()
+    {
+        return container(scrollable(media_panel(app, m, false)))
+            .padding(14)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+    }
     let Some(e) = app.current() else {
         return column![
             tool_bar(app),
@@ -1061,7 +1177,7 @@ fn adj_row<'a>(
 
 fn inspector(app: &App) -> El<'_> {
     let Some(e) = app.current() else {
-        return container(small("Select a photograph to edit."))
+        return container(small(if app.focus_media { "Media files are inspected, redacted and exported in the viewer. Photo adjustments do not apply to audio, video or subtitles." } else { "Select a photograph to edit." }))
             .padding(12)
             .into();
     };
@@ -1307,6 +1423,9 @@ fn inspector(app: &App) -> El<'_> {
         if matches!(app.method, Method::Blur | Method::Pixelate | Method::Mosaic) {
             c = c.push(row![small("Strength").width(78), slider(2..=64, app.strength, Message::Strength).height(14), small(app.strength.to_string()).width(40)].spacing(6));
             c = c.push(small("Visual concealment can leave recoverable detail. Use opaque redaction for sensitive information."));
+            if app.method.concealment(app.strength).is_weak() {
+                c = c.push(container(small("This strength is weak: text underneath may stay readable. Use 8 or more for blur, 12 or more for blocks, or opaque redaction.")).padding(4).style(theme::warning_box));
+            }
         }
         c = c.push(row![small("Brush radius").width(78), slider(1.0..=200.0, app.brush_radius, Message::BrushRadius).height(14), small(format!("{:.0}", app.brush_radius)).width(40)].spacing(6));
         c = c.push(btn("Conceal selection  Enter", app.selection.is_some().then_some(Message::ConcealSelection)));
@@ -1608,7 +1727,7 @@ fn privacy_panel(app: &App) -> El<'_> {
 fn export_panel(app: &App) -> El<'_> {
     let idle = app.busy.is_none();
     let mut c = column![
-        row![text_input("Output folder", &app.output_dir).on_input(Message::OutputDir).size(FONT).padding([3, 6]).style(theme::input), btn("...", Some(Message::BrowseOutput))].spacing(4),
+        row![field(text_input("Output folder", &app.output_dir).on_input(Message::OutputDir).size(FONT).padding([3, 6]).style(theme::input)), btn("...", Some(Message::BrowseOutput))].spacing(4),
         row![pick_list(photo_core::ExportFormat::ALL, Some(app.format), Message::Format).text_size(FONT).padding([3, 6]), small(format!("JPEG quality {}", app.quality)), slider(40..=100, app.quality, Message::Quality).height(14)].spacing(6).align_y(Alignment::Center),
         checkbox("High-assurance review (block on unresolved findings)", app.high_assurance).on_toggle(Message::HighAssurance).size(13).text_size(FONT_SMALL),
         row![
@@ -1691,6 +1810,19 @@ fn technical(app: &App) -> El<'_> {
                 .on_press(Message::Select(i)),
         );
     }
+    for (i, m) in app.media.iter().enumerate() {
+        files = files.push(
+            button(small(format!("{} ({:?})", m.name, m.kind())))
+                .width(Length::Fill)
+                .padding([2, 8])
+                .style(if app.focus_media && app.selected_media == Some(i) {
+                    theme::flat_selected
+                } else {
+                    theme::flat
+                })
+                .on_press(Message::SelectMedia(i)),
+        );
+    }
     let page: El = match app.page {
         TechPage::Diagnostics => diagnostics(app),
         TechPage::Performance => performance(app),
@@ -1699,6 +1831,7 @@ fn technical(app: &App) -> El<'_> {
         TechPage::Lab => lab(app),
         TechPage::Models => models(),
         TechPage::History => history(app),
+        TechPage::Formats => formats(app),
     };
     row![
         container(column![
@@ -1739,12 +1872,14 @@ fn diagnostics(app: &App) -> El<'_> {
         ))
         .text_size(FONT)
         .padding([3, 6]),
-        text_input("Search sanitized messages and codes", &app.log_search)
-            .on_input(Message::LogSearch)
-            .size(FONT)
-            .padding([3, 6])
-            .style(theme::input)
-            .width(260),
+        field(
+            text_input("Search sanitized messages and codes", &app.log_search)
+                .on_input(Message::LogSearch)
+                .size(FONT)
+                .padding([3, 6])
+                .style(theme::input)
+        )
+        .width(260),
         horizontal_space(),
         btn("Copy report", Some(Message::CopyReport)),
         toggle(
@@ -1820,12 +1955,14 @@ fn diagnostics(app: &App) -> El<'_> {
             mib(cfg.max_total_bytes)
         )),
         horizontal_space(),
-        text_input("Look up code (e.g. APD-3002)", &app.code_lookup)
-            .on_input(Message::CodeLookup)
-            .size(FONT)
-            .padding([2, 6])
-            .width(200)
-            .style(theme::input),
+        field(
+            text_input("Look up code (e.g. APD-3002)", &app.code_lookup)
+                .on_input(Message::CodeLookup)
+                .size(FONT)
+                .padding([2, 6])
+                .width(200)
+                .style(theme::input)
+        ),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -2040,6 +2177,353 @@ fn lab(app: &App) -> El<'_> {
         .push(small("ADVERSARIAL PROTECTION"))
         .push(small("Quick / Balanced / Maximum / Custom: unavailable. No validated defense model is installed and no preset has measured effectiveness. The experimental CLIP objective is available only through the CLI research feature and is not a protection claim."))
         .into()
+}
+
+fn formats(app: &App) -> El<'_> {
+    let mut c = column![small("Every file is identified from its content (magic bytes and container structure), never from its extension.")].spacing(6);
+    if app.media.is_empty() {
+        c = c.push(small("No audio, video or subtitle files imported. Add them from Essential or Professional mode."));
+    }
+    for (i, m) in app.media.iter().enumerate() {
+        let mut g = column![
+            row![
+                button(t(m.name.as_str()))
+                    .padding([2, 6])
+                    .style(theme::flat)
+                    .on_press(Message::SelectMedia(i)),
+                horizontal_space(),
+                small(format!("{} · {}", mib(m.bytes), m.status))
+            ]
+            .align_y(Alignment::Center)
+        ]
+        .spacing(3);
+        if m.mismatch {
+            g = g.push(
+                container(small("Extension does not match the detected content."))
+                    .padding(4)
+                    .style(theme::warning_box),
+            );
+        }
+        if let Some(info) = &m.info {
+            g = g.push(small(format!(
+                "Detected: {:?} / {}   Duration: {}",
+                info.kind,
+                info.container,
+                info.duration_s
+                    .map(|d| format!("{d:.3} s"))
+                    .unwrap_or("unknown".into())
+            )));
+            for tr in &info.tracks {
+                g = g.push(small(track_line(tr)));
+            }
+            for f in &info.findings {
+                g = g.push(small(format!(
+                    "Finding: {:?} [{:?}] {}",
+                    f.category, f.source, f.description
+                )));
+            }
+            for w in &info.warnings {
+                g = g.push(small(format!("Note: {w}")));
+            }
+        }
+        c = c.push(
+            container(g)
+                .padding(8)
+                .width(Length::Fill)
+                .style(theme::panel),
+        );
+    }
+    c = c
+        .push(horizontal_rule(1))
+        .push(small("SUPPORT (this build)"));
+    for line in [
+        "Audio decode and analysis: WAV, FLAC, MP3, AAC / M4A, ALAC, Ogg Vorbis (Symphonia, pure Rust).",
+        "Audio export: metadata-free WAV (16-bit PCM or 32-bit float) with mute / bleep redaction, reopened and verified.",
+        "Video: MP4 / MOV / 3GP / M4A metadata removal without re-encoding (chunk offsets rewritten, chunks verified). MKV / WebM: inspection only.",
+        "Subtitles: SRT and WebVTT Privacy Scan and cue redaction.",
+        "Not available: video decoding, frame editing, re-encoding, AI voice or video protection (no validated model), speech-to-text, Opus / AIFF / WMA / AC-3 decoding.",
+    ] {
+        c = c.push(small(line));
+    }
+    scrollable(c).into()
+}
+
+fn track_line(tr: &photo_media::Track) -> String {
+    let mut s = format!("Track {}: {} {}", tr.id, tr.kind, tr.codec);
+    if let (Some(w), Some(h)) = (tr.width, tr.height) {
+        s += &format!("  {w}x{h}");
+    }
+    if let Some(f) = tr.frame_rate {
+        s += &format!("  {f:.3} fps");
+    }
+    if let Some(r) = tr.sample_rate {
+        s += &format!("  {r} Hz");
+    }
+    if let Some(c) = tr.channels {
+        s += &format!("  {c} ch");
+    }
+    if let Some(l) = &tr.language {
+        s += &format!("  lang {l}");
+    }
+    s
+}
+
+fn opt_db(v: Option<f64>, unit: &str) -> String {
+    v.filter(|x| x.is_finite())
+        .map(|x| format!("{x:.1} {unit}"))
+        .unwrap_or("n/a".into())
+}
+
+/// Information, analysis, redaction and export for one media file.
+fn media_panel<'a>(app: &'a App, m: &'a MediaEntry, compact: bool) -> El<'a> {
+    use photo_media::MediaKind;
+    let idle = app.busy.is_none() && m.status != "Exporting";
+    let mut c = column![text(m.name.as_str()).size(FONT_TITLE)].spacing(6);
+    let Some(info) = &m.info else {
+        return c.push(small(m.status.as_str())).into();
+    };
+    c = c.push(small(format!(
+        "{:?} · {} · {} · {}",
+        info.kind,
+        info.container,
+        mib(m.bytes),
+        info.duration_s
+            .map(|d| format!("{d:.2} s"))
+            .unwrap_or("duration unknown".into())
+    )));
+    if m.mismatch {
+        c = c.push(
+            container(small(
+                "The file extension does not match its content; it is handled by its real format.",
+            ))
+            .padding(4)
+            .style(theme::warning_box),
+        );
+    }
+    for tr in info.tracks.iter().take(if compact { 4 } else { 16 }) {
+        c = c.push(small(track_line(tr)));
+    }
+    let mut priv_ = column![small("PRIVACY METADATA")].spacing(2);
+    if info.findings.is_empty() {
+        priv_ = priv_.push(small(
+            "No privacy metadata found in the inspected structures.",
+        ));
+    }
+    for f in info.findings.iter().take(12) {
+        priv_ = priv_.push(small(format!("{:?}: {}", f.category, f.description)));
+    }
+    for w in &info.warnings {
+        priv_ = priv_.push(small(format!("Note: {w}")));
+    }
+    c = c.push(
+        container(priv_)
+            .padding(6)
+            .width(Length::Fill)
+            .style(theme::section_header),
+    );
+    if let Some(a) = &m.analysis {
+        if let Some(w) = &m.wave {
+            c = c.push(small("WAVEFORM")).push(
+                image(w.clone())
+                    .width(Length::Fill)
+                    .content_fit(ContentFit::Fill)
+                    .height(if compact { 70 } else { 120 }),
+            );
+        }
+        if let Some(sp) = &m.spectro {
+            c = c
+                .push(small(
+                    "SPECTROGRAM (0 Hz bottom to Nyquist top, 70 dB range)",
+                ))
+                .push(
+                    image(sp.clone())
+                        .width(Length::Fill)
+                        .content_fit(ContentFit::Fill)
+                        .height(if compact { 70 } else { 128 }),
+                );
+        }
+        c = c.push(label_value(
+            "Format",
+            format!(
+                "{} Hz · {} ch · {} frames",
+                a.sample_rate, a.channels, a.frames
+            ),
+        ));
+        c = c.push(label_value(
+            "Integrated loudness",
+            opt_db(a.integrated_lufs, "LUFS"),
+        ));
+        c = c.push(label_value(
+            "Loudness range",
+            opt_db(a.loudness_range_lu, "LU"),
+        ));
+        c = c.push(label_value("True peak", opt_db(a.true_peak_dbtp, "dBTP")));
+        c = c.push(label_value(
+            "Sample peak",
+            opt_db(Some(a.peak_dbfs), "dBFS"),
+        ));
+        c = c.push(label_value(
+            "Clipped samples",
+            a.clipped_samples.to_string(),
+        ));
+        c = c.push(label_value(
+            "Silence",
+            format!("{:.1} %", a.silent_fraction * 100.),
+        ));
+        if a.decode_errors > 0 {
+            c = c.push(
+                container(small(format!(
+                    "{} packet(s) failed to decode and were skipped.",
+                    a.decode_errors
+                )))
+                .padding(4)
+                .style(theme::warning_box),
+            );
+        }
+        // Segment editor
+        let mut seg = column![small("REDACT SPOKEN CONTENT (time ranges in seconds)")].spacing(4);
+        for (k, sgm) in m.segments.iter().enumerate() {
+            seg = seg.push(
+                row![
+                    small(format!(
+                        "{:?} {:.2} s - {:.2} s",
+                        sgm.kind, sgm.start_s, sgm.end_s
+                    ))
+                    .width(Length::Fill),
+                    btn("Remove", Some(Message::RemoveSegment(k)))
+                ]
+                .align_y(Alignment::Center),
+            );
+        }
+        seg = seg.push(
+            row![
+                field(
+                    text_input("start", &app.seg_start)
+                        .on_input(Message::SegStart)
+                        .size(FONT)
+                        .width(70)
+                        .padding([3, 6])
+                        .style(theme::input)
+                ),
+                field(
+                    text_input("end", &app.seg_end)
+                        .on_input(Message::SegEnd)
+                        .size(FONT)
+                        .width(70)
+                        .padding([3, 6])
+                        .style(theme::input)
+                ),
+                btn(
+                    "Mute",
+                    Some(Message::AddSegment(photo_media::audio::RedactKind::Mute))
+                ),
+                btn(
+                    "Bleep",
+                    Some(Message::AddSegment(photo_media::audio::RedactKind::Bleep))
+                ),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        );
+        seg = seg.push(small("Spoken names and numbers cannot be found automatically: no local speech-to-text model is installed. Listen and mark ranges by hand."));
+        c = c.push(
+            container(seg)
+                .padding(6)
+                .width(Length::Fill)
+                .style(theme::section_header),
+        );
+    }
+    if info.kind == MediaKind::Subtitle {
+        c = c.push(small("Export writes a copy with every cue that contains a Privacy Scan finding replaced by [redacted]."));
+    }
+    let exportable = matches!(info.kind, MediaKind::Audio | MediaKind::Subtitle)
+        || (info.kind == MediaKind::Video
+            && matches!(info.container.as_str(), "MP4" | "MOV" | "3GP" | "M4A"));
+    let label = match info.kind {
+        MediaKind::Audio => "Export clean WAV",
+        MediaKind::Video => "Remove metadata (no re-encode)",
+        MediaKind::Subtitle => "Export redacted subtitles",
+        _ => "Export",
+    };
+    c = c.push(
+        row![
+            button(text(label).size(FONT))
+                .padding([3, 12])
+                .style(theme::primary)
+                .on_press_maybe((idle && exportable).then_some(Message::MediaExport)),
+            small(if exportable {
+                ""
+            } else {
+                "Export is not available for this format."
+            }),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    );
+    c = c.push(small("AI voice / video protection: unavailable. No validated model is installed, so no adversarial changes are made and none are claimed."));
+    if let Some(out) = &m.output {
+        c = c.push(
+            container(small(format!("Saved and verified: {}", out.display())))
+                .padding(4)
+                .style(theme::banner),
+        );
+    }
+    if let Some(cmp) = &m.comparison {
+        c = c.push(small("COMPARISON (original vs export)"));
+        c = c.push(label_value(
+            "Frames compared",
+            cmp.frames_compared.to_string(),
+        ));
+        c = c.push(label_value(
+            "Length difference",
+            format!("{} frames", cmp.length_difference_frames),
+        ));
+        c = c.push(label_value("SNR", opt_db(cmp.snr_db, "dB")));
+        c = c.push(label_value(
+            "Segmental SNR",
+            opt_db(cmp.segmental_snr_db, "dB"),
+        ));
+        if !m.segments.is_empty() {
+            c = c.push(small("SNR includes the muted or bleeped ranges, so a low overall value is expected; segmental SNR reflects the untouched audio."));
+        }
+        c = c.push(small(cmp.note.as_str()));
+    }
+    if info.kind == MediaKind::Audio {
+        c = c.push(small(
+            "A/B LISTENING (both loudness-matched to -23 LUFS, first 2 minutes)",
+        ));
+        let playing = |p: bool| app.playing == Some((app.selected_media.unwrap_or(usize::MAX), p));
+        let i = app.selected_media.unwrap_or(0);
+        c = c.push(
+            row![
+                toggle("A: Original", playing(false), Message::Play(i, false)),
+                button(text("B: Export").size(FONT))
+                    .padding([3, 8])
+                    .style(if playing(true) {
+                        theme::tool_active
+                    } else {
+                        theme::tool
+                    })
+                    .on_press_maybe(m.output.is_some().then_some(Message::Play(i, true))),
+                btn("Stop", Some(Message::StopAudio)),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        );
+    }
+    if !compact && let Some(r) = &m.report {
+        c = c.push(small("EXPORT REPORT")).push(
+            container(
+                text(r.as_str())
+                    .size(FONT_SMALL)
+                    .font(iced::Font::MONOSPACE),
+            )
+            .padding(6)
+            .width(Length::Fill)
+            .style(theme::section_header),
+        );
+    }
+    c.into()
 }
 
 fn models() -> El<'static> {

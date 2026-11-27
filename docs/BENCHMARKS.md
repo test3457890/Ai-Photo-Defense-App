@@ -33,3 +33,16 @@ Proxy preview render without edits: about 290 ms (debug). Privacy Scan of 1600 x
 - Privacy detection precision/recall: no labelled dataset (see TESTING.md).
 - Adversarial protection effectiveness: no validated protection exists.
 - 8 GB RAM systems: not available for testing.
+
+
+## Part 4 audio (release CLI, three runs each)
+
+File: synthetic 10-minute 48 kHz 16-bit stereo WAV (110 MiB), generated locally.
+
+| Operation | Wall time |
+|---|---|
+| `audio-analyze` (decode, EBU R128, true peak, waveform, spectrogram) | 3.38 to 3.43 s |
+| `audio-export --bleep 60-65` (decode, redact, write, reopen and verify every sample) | 1.97 s |
+| `audio-compare` (decode both, SNR and segmental SNR) | 0.60 to 0.62 s |
+
+Peak memory was not captured. Decoding is streamed, so memory does not grow with duration apart from the fixed-size waveform and spectrogram summaries. MP4 metadata removal was only measured on small synthetic files (instant); no large real video was available. No GPU path exists.
