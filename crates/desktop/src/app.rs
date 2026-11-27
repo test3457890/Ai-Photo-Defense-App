@@ -55,6 +55,8 @@ pub struct UpdateInfo {
     pub update_available: bool,
     pub release_url: String,
     pub notes: String,
+    pub asset_name: Option<String>,
+    pub asset_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,6 +351,7 @@ pub struct MediaEntry {
     pub video_from: String,
     pub video_to: String,
     pub video_blur: bool,
+    pub video_track_warnings: Vec<String>,
 }
 impl MediaEntry {
     pub fn kind(&self) -> photo_media::MediaKind {
@@ -561,6 +564,14 @@ pub enum Message {
     CheckForUpdates,
     UpdatesChecked(Result<UpdateInfo, String>),
     OpenReleasesPage,
+    DownloadLatestInstaller,
+    InstallerDownloaded(Result<String, String>),
+    LoadCalibrationSample,
+    VideoSetFromNow,
+    VideoSetToNow,
+    VideoStep(f64),
+    VideoTrackAndRedact,
+    VideoTrackDone(usize, Result<(PathBuf, String, Vec<String>), String>),
     SelectFace(photo_privacy::Rect),
     SelectAllFaces,
     PaneResized(pane_grid::ResizeEvent),
@@ -653,6 +664,7 @@ pub struct App {
     pub wizard_step: u8,
     pub tutorial_step: u8,
     pub update_status: Option<Result<UpdateInfo, String>>,
+    pub download_status: Option<String>,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -1397,6 +1409,7 @@ impl App {
             wizard_step: 0,
             tutorial_step: 0,
             update_status: None,
+            download_status: None,
         };
         app.refresh_library();
         app
@@ -1819,6 +1832,7 @@ impl App {
                             video_from: "0.0".into(),
                             video_to: "1.0".into(),
                             video_blur: false,
+                            video_track_warnings: vec![],
                         });
                         Task::perform(
                             async move {
@@ -2998,6 +3012,118 @@ impl App {
             Message::OpenReleasesPage => {
                 open_releases_in_browser();
             }
+            Message::DownloadLatestInstaller => {
+                let Some(Ok(info)) = &self.update_status else {
+                    self.note("Check for updates first.");
+                    return Task::none();
+                };
+                let (Some(name), Some(url)) = (info.asset_name.clone(), info.asset_url.clone())
+                else {
+                    open_releases_in_browser();
+                    return Task::none();
+                };
+                self.busy = Some(format!("Downloading {name}..."));
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || download_release_asset(&name, &url))
+                            .await
+                            .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    Message::InstallerDownloaded,
+                );
+            }
+            Message::InstallerDownloaded(res) => {
+                self.busy = None;
+                match &res {
+                    Ok(msg) => {
+                        self.note(msg.clone());
+                        self.download_status = Some(msg.clone());
+                    }
+                    Err(e) => {
+                        self.note(format!("Download failed: {e}"));
+                        self.download_status = Some(format!("Download error: {e}"));
+                    }
+                }
+            }
+            Message::LoadCalibrationSample => {
+                let candidates = [
+                    PathBuf::from("tests/fixtures/calibration.png"),
+                    PathBuf::from("../../tests/fixtures/calibration.png"),
+                ];
+                if let Some(p) = candidates.into_iter().find(|p| p.is_file()) {
+                    self.show_wizard = false;
+                    return self.update(Message::Picked(vec![p]));
+                } else {
+                    self.note("Sample fixture not found in working directory; use Import Photos.");
+                    return self.update(Message::OpenDialog);
+                }
+            }
+            Message::VideoSetFromNow => {
+                if let Some(i) = self.selected_media
+                    && let Some(m) = self.media.get_mut(i)
+                {
+                    m.video_from = format!("{:.2}", m.video_time_s);
+                }
+            }
+            Message::VideoSetToNow => {
+                if let Some(i) = self.selected_media
+                    && let Some(m) = self.media.get_mut(i)
+                {
+                    m.video_to = format!("{:.2}", m.video_time_s);
+                }
+            }
+            Message::VideoStep(dt) => {
+                if let Some(i) = self.selected_media
+                    && let Some(m) = self.media.get(i)
+                {
+                    let next = (m.video_time_s + dt).clamp(0.0, m.video_duration_s.max(0.0));
+                    return self.update(Message::VideoScrub(next));
+                }
+            }
+            Message::VideoTrackAndRedact => {
+                let Some(i) = self.selected_media else {
+                    return Task::none();
+                };
+                let dir = PathBuf::from(self.output_dir.trim());
+                if self.output_dir.trim().is_empty() || !dir.is_dir() {
+                    self.note("Choose an existing output folder first.");
+                    return self.update(Message::BrowseOutput);
+                }
+                let m = &mut self.media[i];
+                let path = m.path.clone();
+                let rect_str = m.video_rect.clone();
+                let time_s = m.video_time_s;
+                let blur = m.video_blur;
+                m.status = "Tracking & redacting video...".into();
+                m.video_track_warnings.clear();
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            track_video_media(&path, &dir, &rect_str, time_s, blur)
+                                .map_err(|e| format!("{e:#}"))
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    move |r| Message::VideoTrackDone(i, r),
+                );
+            }
+            Message::VideoTrackDone(i, res) => {
+                if let Some(m) = self.media.get_mut(i) {
+                    match res {
+                        Ok((out, msg, warnings)) => {
+                            m.status = msg.clone();
+                            m.output = Some(out);
+                            m.video_track_warnings = warnings;
+                            self.note(msg);
+                        }
+                        Err(e) => {
+                            m.status = format!("Track failed: {e}");
+                            self.note(e);
+                        }
+                    }
+                }
+            }
             Message::ValidationDone(r) => {
                 self.busy = None;
                 match r {
@@ -4046,6 +4172,45 @@ fn check_github_release() -> Result<UpdateInfo, String> {
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         if stderr.contains("404") {
+            // No published release tag yet — query latest commit on main so user sees real GitHub status.
+            let c_url =
+                "https://api.github.com/repos/test3457890/Ai-Photo-Defense-App/commits/main";
+            if let Ok(c_out) = std::process::Command::new("curl")
+                .args(["-fsSL", "--max-time", "8", "-A", &ua, c_url])
+                .output()
+                && c_out.status.success()
+                && let Ok(c_val) = serde_json::from_slice::<serde_json::Value>(&c_out.stdout)
+            {
+                let sha: String = c_val
+                    .get("sha")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")
+                    .chars()
+                    .take(7)
+                    .collect();
+                let msg: String = c_val
+                    .pointer("/commit/message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(120)
+                    .collect();
+                return Ok(UpdateInfo {
+                    current_version: VERSION.to_string(),
+                    latest_version: format!("main@{sha}"),
+                    update_available: false,
+                    release_url: "https://github.com/test3457890/Ai-Photo-Defense-App/actions"
+                        .to_string(),
+                    notes: format!(
+                        "No tagged GitHub Release published yet. Latest commit on main: {sha} — {msg}"
+                    ),
+                    asset_name: None,
+                    asset_url: None,
+                });
+            }
             return Err(format!(
                 "No published GitHub release yet (running development build {VERSION})."
             ));
@@ -4071,6 +4236,31 @@ fn check_github_release() -> Result<UpdateInfo, String> {
         .chars()
         .take(200)
         .collect();
+
+    let wanted_ext = if cfg!(target_os = "windows") {
+        ".msi"
+    } else if cfg!(target_os = "macos") {
+        ".dmg"
+    } else {
+        ".AppImage"
+    };
+    let mut asset_name = None;
+    let mut asset_url = None;
+    if let Some(assets) = val.get("assets").and_then(|a| a.as_array()) {
+        for a in assets {
+            let name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let dl = a
+                .get("browser_download_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if name.ends_with(wanted_ext) && dl.starts_with("https://") {
+                asset_name = Some(name.to_string());
+                asset_url = Some(dl.to_string());
+                break;
+            }
+        }
+    }
+
     let latest_clean = tag.trim_start_matches('v');
     let update_available = latest_clean != VERSION && latest_clean != "unknown";
     Ok(UpdateInfo {
@@ -4079,7 +4269,101 @@ fn check_github_release() -> Result<UpdateInfo, String> {
         update_available,
         release_url,
         notes,
+        asset_name,
+        asset_url,
     })
+}
+
+fn download_release_asset(name: &str, url: &str) -> Result<String, String> {
+    if !url.starts_with("https://github.com/")
+        && !url.starts_with("https://objects.githubusercontent.com/")
+    {
+        return Err("Refusing non-GitHub download URL".into());
+    }
+    let safe_name: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        .collect();
+    if safe_name.is_empty() {
+        return Err("Invalid asset filename".into());
+    }
+    let dl_dir = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(|h| PathBuf::from(h).join("Downloads"))
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(std::env::temp_dir);
+    let dest = dl_dir.join(&safe_name);
+    let ua = format!("AI-Photo-Defense/{VERSION}");
+    let out = std::process::Command::new("curl")
+        .args(["-fsSL", "--max-time", "120", "-A", &ua, "-o"])
+        .arg(&dest)
+        .arg(url)
+        .output()
+        .map_err(|e| format!("Failed to invoke curl: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "Download failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let bytes = std::fs::read(&dest).map_err(|e| format!("Read downloaded file: {e}"))?;
+    let fp = photo_core::fingerprint(&bytes);
+    Ok(format!(
+        "Downloaded {} ({} bytes) · SHA-256: {}",
+        dest.display(),
+        bytes.len(),
+        fp.sha256
+    ))
+}
+
+#[cfg(feature = "video")]
+fn track_video_media(
+    path: &Path,
+    out_dir: &Path,
+    rect_str: &str,
+    time_s: f64,
+    blur: bool,
+) -> anyhow::Result<(PathBuf, String, Vec<String>)> {
+    let parts: Vec<u32> = rect_str
+        .split(',')
+        .map(|s| s.trim().parse::<u32>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| anyhow::anyhow!("Rect must be x,y,w,h"))?;
+    anyhow::ensure!(parts.len() == 4, "Rect must be x,y,w,h");
+    let kf = photo_media::video_track::Keyframe {
+        time_s,
+        x: parts[0],
+        y: parts[1],
+        width: parts[2],
+        height: parts[3],
+    };
+    let (tracked, rects) = photo_media::video_track::track_object_in_mp4(path, &[kf], blur)?;
+    let summary = photo_media::video_track::summarize_track(&tracked);
+    let stem = photo_core::safe_stem(path)?;
+    let mut out = out_dir.join(format!("{stem}-tracked.mp4"));
+    let mut n = 2u32;
+    while out.exists() {
+        out = out_dir.join(format!("{stem}-tracked-{n}.mp4"));
+        n += 1;
+    }
+    let r = photo_media::video::redact_mp4(path, &out, &rects)?;
+    let verify = photo_media::video_track::verify_redacted_mp4(&out, &rects)?;
+    let msg = format!(
+        "Tracked & redacted {} frames ({} verified, {} failed, metadata clean={})",
+        r.frame_count, verify.redacted_frames_checked, verify.failed_frames, verify.metadata_clean
+    );
+    Ok((out, msg, summary.warnings))
+}
+
+#[cfg(not(feature = "video"))]
+fn track_video_media(
+    _path: &Path,
+    _out_dir: &Path,
+    _rect_str: &str,
+    _time_s: f64,
+    _blur: bool,
+) -> anyhow::Result<(PathBuf, String, Vec<String>)> {
+    anyhow::bail!("Built without the `video` feature.")
 }
 
 fn open_releases_in_browser() {

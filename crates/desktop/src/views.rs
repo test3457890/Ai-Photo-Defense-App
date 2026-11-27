@@ -2618,10 +2618,12 @@ fn media_panel<'a>(app: &'a App, m: &'a MediaEntry, compact: bool) -> El<'a> {
         let max_s = m.video_duration_s.max(0.01);
         c = c.push(
             row![
+                btn("-0.1s", Some(Message::VideoStep(-0.1))),
                 btn(
                     if m.video_playing { "Pause" } else { "Play" },
                     Some(Message::VideoTogglePlay)
                 ),
+                btn("+0.1s", Some(Message::VideoStep(0.1))),
                 slider(0.0..=max_s, m.video_time_s, Message::VideoScrub)
                     .step(0.033)
                     .width(Length::Fill),
@@ -2630,37 +2632,57 @@ fn media_panel<'a>(app: &'a App, m: &'a MediaEntry, compact: bool) -> El<'a> {
                     m.video_time_s, m.video_duration_s
                 )),
             ]
-            .spacing(8)
+            .spacing(6)
             .align_y(Alignment::Center),
         );
         c = c.push(
             row![
-                small("Rect x,y,w,h:"),
+                small("Box x,y,w,h:"),
                 text_input("16,16,64,64", &m.video_rect)
                     .on_input(Message::VideoRect)
                     .size(FONT)
-                    .width(120),
+                    .width(110),
                 small("From (s):"),
                 text_input("0.0", &m.video_from)
                     .on_input(Message::VideoFrom)
                     .size(FONT)
-                    .width(60),
+                    .width(55),
+                btn("= Now", Some(Message::VideoSetFromNow)),
                 small("To (s):"),
                 text_input("1.0", &m.video_to)
                     .on_input(Message::VideoTo)
                     .size(FONT)
-                    .width(60),
+                    .width(55),
+                btn("= Now", Some(Message::VideoSetToNow)),
                 checkbox("Blur", m.video_blur)
                     .on_toggle(Message::VideoBlur)
                     .size(14),
-                btn(
-                    "Redact & re-encode MP4",
-                    idle.then_some(Message::VideoRedact)
-                ),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
         );
+        c = c.push(
+            row![
+                btn(
+                    "Redact Range & Re-encode MP4",
+                    idle.then_some(Message::VideoRedact)
+                ),
+                btn(
+                    "Track Object from Playhead & Redact MP4",
+                    idle.then_some(Message::VideoTrackAndRedact)
+                ),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        );
+        for w in &m.video_track_warnings {
+            c = c.push(
+                container(small(format!("Tracking warning: {w}")))
+                    .padding(4)
+                    .width(Length::Fill)
+                    .style(theme::warning_box),
+            );
+        }
     }
     if info.kind == MediaKind::Subtitle {
         c = c.push(small("Export writes a copy with every cue that contains a Privacy Scan finding replaced by [redacted]."));
@@ -2846,16 +2868,29 @@ fn history(app: &App) -> El<'_> {
 }
 
 fn update_status_block(app: &App) -> El<'_> {
+    let mut buttons = row![
+        btn(
+            "Check GitHub for Updates",
+            app.busy.is_none().then_some(Message::CheckForUpdates)
+        ),
+        btn("Open GitHub Releases", Some(Message::OpenReleasesPage)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    if let Some(Ok(info)) = &app.update_status
+        && info.asset_url.is_some()
+    {
+        buttons = buttons.push(btn(
+            "Download Installer to Downloads",
+            app.busy
+                .is_none()
+                .then_some(Message::DownloadLatestInstaller),
+        ));
+    }
+
     let mut c = column![
-        row![
-            btn(
-                "Check for Updates (GitHub)",
-                app.busy.is_none().then_some(Message::CheckForUpdates)
-            ),
-            btn("Open GitHub Releases Page", Some(Message::OpenReleasesPage)),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
+        buttons,
         small(format!(
             "Installed version: {} · Updates are opt-in only and never alter OS security settings.",
             VERSION
@@ -2867,17 +2902,17 @@ fn update_status_block(app: &App) -> El<'_> {
             Ok(info) => {
                 let msg = if info.update_available {
                     format!(
-                        "New version available: {} (installed: {}). Download the Windows .msi, macOS .dmg, or Linux .deb/.AppImage from GitHub Releases and verify SHA-256.",
+                        "New release available: {} (installed: {}). Download the Windows .msi, macOS .dmg, or Linux .AppImage/.deb and verify SHA-256.",
                         info.latest_version, info.current_version
                     )
                 } else {
                     format!(
-                        "You are up to date (latest GitHub release: {}).",
-                        info.latest_version
+                        "GitHub status: {} (installed build: {}).",
+                        info.latest_version, info.current_version
                     )
                 };
                 c = c.push(small(msg));
-                c = c.push(small(format!("Release URL: {}", info.release_url)));
+                c = c.push(small(format!("GitHub URL: {}", info.release_url)));
                 if !info.notes.is_empty() {
                     c = c.push(small(info.notes.clone()));
                 }
@@ -2886,6 +2921,9 @@ fn update_status_block(app: &App) -> El<'_> {
                 c = c.push(small(format!("Update check note: {e}")));
             }
         }
+    }
+    if let Some(dl) = &app.download_status {
+        c = c.push(small(dl.clone()));
     }
     c.into()
 }
@@ -3008,24 +3046,47 @@ fn startup_wizard(app: &App) -> El<'_> {
 }
 
 fn home(app: &App) -> El<'_> {
+    let features = [
+        cfg!(feature = "faces").then_some("faces"),
+        cfg!(feature = "c2pa").then_some("c2pa"),
+        cfg!(feature = "video").then_some("video"),
+        cfg!(feature = "opus").then_some("opus"),
+        cfg!(feature = "experimental-clip").then_some("clip"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(", ");
+
     let content = column![
-        text("AI Photo Defense — Main Menu").size(FONT_TITLE),
-        small("Offline-first media privacy workstation for Windows, macOS, and Linux."),
+        row![
+            column![
+                text("AI Photo Defense — Main Menu").size(FONT_TITLE),
+                small("Offline-first media privacy workstation for Windows, macOS, and Linux."),
+            ]
+            .spacing(2),
+            horizontal_space(),
+            btn("Startup Wizard", Some(Message::ShowWizard(true))),
+            btn("Tutorial Mode", Some(Message::Mode(Mode::Tutorial))),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
         horizontal_rule(1),
+        t("Quick Start"),
         row![
             btn("Import Photos", Some(Message::OpenDialog)),
             btn("Import Folder", Some(Message::OpenFolderDialog)),
-            btn("Open Startup Wizard", Some(Message::ShowWizard(true))),
-            btn("Start Tutorial Mode", Some(Message::Mode(Mode::Tutorial))),
+            btn("Load Sample Photo", Some(Message::LoadCalibrationSample)),
+            btn("Scan Current Photo", app.selected.map(|_| Message::Scan)),
         ]
         .spacing(8),
         horizontal_rule(1),
-        t("Workspaces"),
+        t("Choose a Workspace Mode"),
         row![
             container(
                 column![
                     t("Essential Mode"),
-                    small("Simple one-screen workflow: import, Privacy Scan, conceal/redact, and verified export."),
+                    small("Simple guided list: import photos/media, run Privacy Scan, conceal/redact, and export clean copies."),
                     btn("Open Essential", Some(Message::Mode(Mode::Essential))),
                 ]
                 .spacing(6),
@@ -3036,7 +3097,7 @@ fn home(app: &App) -> El<'_> {
             container(
                 column![
                     t("Professional Studio"),
-                    small("Full editor with Color Studio, layers, masks, audio/video redaction, and media catalog."),
+                    small("Full editor with Color Studio, layers, masks, H.264 video tracking/redaction, audio bleeping, and catalog."),
                     btn("Open Professional", Some(Message::Mode(Mode::Professional))),
                 ]
                 .spacing(6),
@@ -3047,7 +3108,7 @@ fn home(app: &App) -> El<'_> {
             container(
                 column![
                     t("Technical & Validation"),
-                    small("Validation Center, 23-transform durability, forensics, model library, and diagnostics."),
+                    small("Validation Center, 23-transform durability tests, forensics, Model Library, and diagnostics."),
                     btn("Open Technical", Some(Message::Mode(Mode::Technical))),
                 ]
                 .spacing(6),
@@ -3058,8 +3119,22 @@ fn home(app: &App) -> El<'_> {
         ]
         .spacing(10),
         horizontal_rule(1),
-        t("Updates & Releases"),
-        update_status_block(app),
+        container(
+            column![
+                t("Session & Updates"),
+                small(format!(
+                    "Photos loaded: {} · Media files loaded: {} · Enabled features: [{}]",
+                    app.entries.len(),
+                    app.media.len(),
+                    features
+                )),
+                update_status_block(app),
+            ]
+            .spacing(6),
+        )
+        .padding(12)
+        .width(Length::Fill)
+        .style(theme::section_header),
     ]
     .spacing(10);
 
@@ -3071,85 +3146,137 @@ fn home(app: &App) -> El<'_> {
 
 fn tutorial(app: &App) -> El<'_> {
     let step = app.tutorial_step;
-    let steps = [
-        (
-            "1. Import Your Photo or Video",
-            "Click 'Import Photos' (or drag & drop a file onto the window). Your original file is never modified.",
-        ),
-        (
-            "2. Run a Local Privacy Scan",
-            "Click 'Scan' (Ctrl+P) to detect hidden EXIF/GPS location data, camera serial numbers, QR codes, and credentials.",
-        ),
-        (
-            "3. Redact Sensitive Areas",
-            "Use Rectangle/Ellipse/Brush tools in Essential or Professional mode. For secrets/QR codes, always use solid opaque redaction (blur can be reversed).",
-        ),
-        (
-            "4. Export a Verified Clean Copy",
-            "Click 'Export' (Ctrl+E). AI Photo Defense strips all metadata, saves a new copy, and re-opens the exported file to verify it is clean.",
-        ),
-        (
-            "5. Verify in Validation Center",
-            "Switch to Technical > Defense Lab to inspect image quality (PSNR, SSIM, Delta-E), run 23-transform durability tests, or test with local AI models.",
-        ),
-    ];
+    let has_photo = !app.entries.is_empty();
+    let has_scan = app.entries.iter().any(|e| e.scan.is_some());
+    let has_edit = app.entries.iter().any(|e| !e.edits.active().is_empty());
+    let has_export = app
+        .entries
+        .iter()
+        .any(|e| matches!(e.export, Some(ExportState::Done { .. })));
+    let has_val = app.validation_report.is_some();
 
-    let mut list = column![
-        text("Interactive Tutorial Mode").size(FONT_TITLE),
-        small("Learn the safe privacy workflow in 5 quick steps."),
+    let check = |done: bool, label: &str| {
+        small(format!(
+            "{} {label}",
+            if done { "[Done]" } else { "[Todo]" }
+        ))
+    };
+
+    let (title, desc, action_row): (&str, &str, El<'_>) = match step {
+        0 => (
+            "Step 1 of 5 — Import a Photo (Your Original Is Never Changed)",
+            "Click 'Load Sample Photo' to try immediately with our calibration image, or 'Import Photos' to pick your own JPEG/PNG/WebP/RAW.",
+            row![
+                btn("Load Sample Photo", Some(Message::LoadCalibrationSample)),
+                btn("Import Your Photo", Some(Message::OpenDialog)),
+                btn("Next Step ->", Some(Message::TutorialStep(1))),
+            ]
+            .spacing(8)
+            .into(),
+        ),
+        1 => (
+            "Step 2 of 5 — Run Local Privacy Scan",
+            "Privacy Scan inspects EXIF/GPS location tags, camera serial numbers, QR/barcodes, and sensitive text locally on your device.",
+            row![
+                btn("Run Scan Now", app.selected.map(|_| Message::Scan)),
+                btn("View in Essential", Some(Message::Mode(Mode::Essential))),
+                btn("Next Step ->", Some(Message::TutorialStep(2))),
+            ]
+            .spacing(8)
+            .into(),
+        ),
+        2 => (
+            "Step 3 of 5 — Redact Sensitive Areas",
+            "In Essential or Professional mode, drag a rectangle/ellipse over faces, license plates, or QR codes. Use solid opaque redaction for secrets (blur can be partially reversed).",
+            row![
+                btn(
+                    "Open Professional Editor",
+                    Some(Message::Mode(Mode::Professional))
+                ),
+                btn("Open Essential Mode", Some(Message::Mode(Mode::Essential))),
+                btn("Next Step ->", Some(Message::TutorialStep(3))),
+            ]
+            .spacing(8)
+            .into(),
+        ),
+        3 => (
+            "Step 4 of 5 — Export a Verified Clean Copy",
+            "Export strips all metadata and re-opens the saved file to verify no hidden EXIF/GPS or unredacted QR codes remain.",
+            row![
+                btn(
+                    "Export Current Photo",
+                    app.selected.map(|_| Message::Export {
+                        accept_unresolved: false,
+                        all: false,
+                    })
+                ),
+                btn("Next Step ->", Some(Message::TutorialStep(4))),
+            ]
+            .spacing(8)
+            .into(),
+        ),
+        _ => (
+            "Step 5 of 5 — Verify in Validation Center",
+            "Open Technical > Defense Lab to inspect image quality (PSNR, SSIM, CIELAB Delta-E), run the 23-transform durability suite, or test local AI models.",
+            row![
+                btn("Open Validation Center", Some(Message::Page(TechPage::Lab))),
+                btn("Back to Main Menu", Some(Message::Mode(Mode::Home))),
+            ]
+            .spacing(8)
+            .into(),
+        ),
+    };
+
+    let content = column![
+        row![
+            text("Interactive Tutorial Mode").size(FONT_TITLE),
+            horizontal_space(),
+            btn("Back to Main Menu", Some(Message::Mode(Mode::Home))),
+        ]
+        .align_y(Alignment::Center),
+        small("Follow these 5 hands-on steps. Your progress updates live as you try each action."),
         horizontal_rule(1),
-    ]
-    .spacing(8);
-
-    for (idx, (title, desc)) in steps.iter().enumerate() {
-        let active = idx as u8 == step;
-        list = list.push(
-            container(
-                column![
-                    row![
-                        t(*title),
-                        horizontal_space(),
-                        btn(
-                            if active { "Current Step" } else { "View" },
-                            Some(Message::TutorialStep(idx as u8))
-                        ),
-                    ]
-                    .align_y(Alignment::Center),
-                    small(*desc),
-                ]
-                .spacing(4),
-            )
-            .padding(10)
+        row![
+            btn("1. Import", Some(Message::TutorialStep(0))),
+            btn("2. Scan", Some(Message::TutorialStep(1))),
+            btn("3. Redact", Some(Message::TutorialStep(2))),
+            btn("4. Export", Some(Message::TutorialStep(3))),
+            btn("5. Validate", Some(Message::TutorialStep(4))),
+        ]
+        .spacing(6),
+        container(column![t(title), small(desc), Space::with_height(6), action_row,].spacing(8),)
+            .padding(16)
             .width(Length::Fill)
-            .style(if active {
-                theme::banner
-            } else {
-                theme::section_header
-            }),
-        );
-    }
-
-    list = list.push(
+            .style(theme::banner),
+        container(
+            column![
+                t("Your Session Checklist"),
+                check(has_photo, "1. Photo imported"),
+                check(has_scan, "2. Privacy Scan run"),
+                check(has_edit, "3. Edit or redaction applied"),
+                check(has_export, "4. Verified clean copy exported"),
+                check(has_val, "5. Validation Center report generated"),
+            ]
+            .spacing(4),
+        )
+        .padding(12)
+        .width(Length::Fill)
+        .style(theme::section_header),
         row![
             btn(
-                "Previous",
+                "<- Previous",
                 (step > 0).then_some(Message::TutorialStep(step.saturating_sub(1)))
-            ),
-            btn(
-                "Next",
-                (step < 4).then_some(Message::TutorialStep(step + 1))
             ),
             horizontal_space(),
             btn(
-                "Try Essential Mode Now",
-                Some(Message::Mode(Mode::Essential))
+                "Next ->",
+                (step < 4).then_some(Message::TutorialStep(step + 1))
             ),
-            btn("Back to Main Menu", Some(Message::Mode(Mode::Home))),
-        ]
-        .spacing(8),
-    );
+        ],
+    ]
+    .spacing(10);
 
-    scrollable(container(list).padding(20))
+    scrollable(container(content).padding(20))
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
