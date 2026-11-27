@@ -23,18 +23,38 @@ pub const DEPENDENCIES: &str = env!("APD_DEPENDENCIES");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Mode {
+    Home,
     Essential,
     #[default]
     Professional,
     Technical,
+    Tutorial,
 }
 impl Mode {
-    pub const ALL: [Self; 3] = [Self::Essential, Self::Professional, Self::Technical];
+    pub const ALL: [Self; 5] = [
+        Self::Home,
+        Self::Essential,
+        Self::Professional,
+        Self::Technical,
+        Self::Tutorial,
+    ];
 }
 impl std::fmt::Display for Mode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
+        match self {
+            Self::Home => write!(f, "Main Menu"),
+            _ => write!(f, "{self:?}"),
+        }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct UpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub update_available: bool,
+    pub release_url: String,
+    pub notes: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -535,6 +555,12 @@ pub enum Message {
     ChooseClipManifest,
     ClipManifestChosen(Option<PathBuf>),
     BatchValidationDone(Vec<String>),
+    ShowWizard(bool),
+    WizardStep(u8),
+    TutorialStep(u8),
+    CheckForUpdates,
+    UpdatesChecked(Result<UpdateInfo, String>),
+    OpenReleasesPage,
     SelectFace(photo_privacy::Rect),
     SelectAllFaces,
     PaneResized(pane_grid::ResizeEvent),
@@ -623,6 +649,10 @@ pub struct App {
     pub clip_model_path: Option<PathBuf>,
     pub clip_manifest_path: Option<PathBuf>,
     pub batch_validation: Vec<String>,
+    pub show_wizard: bool,
+    pub wizard_step: u8,
+    pub tutorial_step: u8,
+    pub update_status: Option<Result<UpdateInfo, String>>,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -1363,6 +1393,10 @@ impl App {
             clip_model_path: None,
             clip_manifest_path: None,
             batch_validation: vec![],
+            show_wizard: true,
+            wizard_step: 0,
+            tutorial_step: 0,
+            update_status: None,
         };
         app.refresh_library();
         app
@@ -1647,6 +1681,7 @@ impl App {
             Message::MenuClose => self.menu = None,
             Message::Mode(m) => {
                 self.mode = m;
+                self.show_wizard = false;
                 self.menu = None;
                 if m == Mode::Technical {
                     self.refresh_perf();
@@ -2919,6 +2954,50 @@ impl App {
                 ));
                 self.batch_validation = rows;
             }
+            Message::ShowWizard(show) => {
+                self.show_wizard = show;
+                self.menu = None;
+                if show {
+                    self.wizard_step = 0;
+                }
+            }
+            Message::WizardStep(step) => {
+                self.wizard_step = step.min(3);
+            }
+            Message::TutorialStep(step) => {
+                self.tutorial_step = step.min(4);
+            }
+            Message::CheckForUpdates => {
+                self.busy = Some("Checking GitHub releases...".into());
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(check_github_release)
+                            .await
+                            .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    Message::UpdatesChecked,
+                );
+            }
+            Message::UpdatesChecked(res) => {
+                self.busy = None;
+                match &res {
+                    Ok(info) => {
+                        if info.update_available {
+                            self.note(format!(
+                                "Update available: {} (current: {})",
+                                info.latest_version, info.current_version
+                            ));
+                        } else {
+                            self.note(format!("Up to date ({})", info.current_version));
+                        }
+                    }
+                    Err(e) => self.note(format!("Update check: {e}")),
+                }
+                self.update_status = Some(res);
+            }
+            Message::OpenReleasesPage => {
+                open_releases_in_browser();
+            }
             Message::ValidationDone(r) => {
                 self.busy = None;
                 match r {
@@ -3936,10 +4015,15 @@ pub fn run() -> iced::Result {
             app.appearance = appearance;
             app.output_dir = output;
             app.mode = match mode.as_deref() {
+                Some("home") => Mode::Home,
                 Some("essential") => Mode::Essential,
                 Some("technical") => Mode::Technical,
+                Some("tutorial") => Mode::Tutorial,
                 _ => Mode::Professional,
             };
+            if !paths.is_empty() || mode.is_some() {
+                app.show_wizard = false;
+            }
             let import = app.update(Message::Picked(paths));
             (
                 app,
@@ -3950,4 +4034,62 @@ pub fn run() -> iced::Result {
                 ]),
             )
         })
+}
+
+fn check_github_release() -> Result<UpdateInfo, String> {
+    let url = "https://api.github.com/repos/test3457890/Ai-Photo-Defense-App/releases/latest";
+    let ua = format!("AI-Photo-Defense/{VERSION}");
+    let out = std::process::Command::new("curl")
+        .args(["-fsSL", "--max-time", "8", "-A", &ua, url])
+        .output()
+        .map_err(|e| format!("Could not run system curl to check GitHub: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if stderr.contains("404") {
+            return Err(format!(
+                "No published GitHub release yet (running development build {VERSION})."
+            ));
+        }
+        return Err(format!("GitHub check unavailable ({})", stderr.trim()));
+    }
+    let val: serde_json::Value =
+        serde_json::from_slice(&out.stdout).map_err(|e| format!("Invalid JSON response: {e}"))?;
+    let tag = val
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown")
+        .to_string();
+    let release_url = val
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("https://github.com/test3457890/Ai-Photo-Defense-App/releases")
+        .to_string();
+    let notes: String = val
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .chars()
+        .take(200)
+        .collect();
+    let latest_clean = tag.trim_start_matches('v');
+    let update_available = latest_clean != VERSION && latest_clean != "unknown";
+    Ok(UpdateInfo {
+        current_version: VERSION.to_string(),
+        latest_version: tag,
+        update_available,
+        release_url,
+        notes,
+    })
+}
+
+fn open_releases_in_browser() {
+    let url = "https://github.com/test3457890/Ai-Photo-Defense-App/releases";
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", "", url])
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
 }

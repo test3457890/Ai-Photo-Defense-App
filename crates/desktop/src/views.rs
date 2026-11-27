@@ -98,11 +98,17 @@ pub fn view(app: &App) -> El<'_> {
             .style(theme::warning_box),
         );
     }
-    let content: El = match app.mode {
-        Mode::Essential => essential(app),
-        Mode::Professional if app.fullscreen => viewer(app),
-        Mode::Professional => professional(app),
-        Mode::Technical => technical(app),
+    let content: El = if app.show_wizard {
+        startup_wizard(app)
+    } else {
+        match app.mode {
+            Mode::Home => home(app),
+            Mode::Essential => essential(app),
+            Mode::Professional if app.fullscreen => viewer(app),
+            Mode::Professional => professional(app),
+            Mode::Technical => technical(app),
+            Mode::Tutorial => tutorial(app),
+        }
     };
     body = body
         .push(container(content).height(Length::Fill))
@@ -351,6 +357,14 @@ fn menu_popup(app: &App, m: Menu) -> El<'_> {
         Menu::Help => (
             178.,
             vec![
+                item("Startup Wizard", "", Some(Message::ShowWizard(true))),
+                item("Tutorial Mode", "", Some(Message::Mode(Mode::Tutorial))),
+                item(
+                    "Check for Updates (GitHub)",
+                    "",
+                    Some(Message::CheckForUpdates),
+                ),
+                item("Open GitHub Releases", "", Some(Message::OpenReleasesPage)),
                 item("Keyboard shortcuts", "", Some(Message::MenuClose)),
                 item(
                     "Diagnostics Center",
@@ -2829,4 +2843,314 @@ fn history(app: &App) -> El<'_> {
         c = c.push(small("No photographs in this session."));
     }
     scrollable(c.push(small("Edit history is part of the project and autosave journal. It contains photo paths but never pixels."))).height(Length::Fill).into()
+}
+
+fn update_status_block(app: &App) -> El<'_> {
+    let mut c = column![
+        row![
+            btn(
+                "Check for Updates (GitHub)",
+                app.busy.is_none().then_some(Message::CheckForUpdates)
+            ),
+            btn("Open GitHub Releases Page", Some(Message::OpenReleasesPage)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+        small(format!(
+            "Installed version: {} · Updates are opt-in only and never alter OS security settings.",
+            VERSION
+        )),
+    ]
+    .spacing(4);
+    if let Some(res) = &app.update_status {
+        match res {
+            Ok(info) => {
+                let msg = if info.update_available {
+                    format!(
+                        "New version available: {} (installed: {}). Download the Windows .msi, macOS .dmg, or Linux .deb/.AppImage from GitHub Releases and verify SHA-256.",
+                        info.latest_version, info.current_version
+                    )
+                } else {
+                    format!(
+                        "You are up to date (latest GitHub release: {}).",
+                        info.latest_version
+                    )
+                };
+                c = c.push(small(msg));
+                c = c.push(small(format!("Release URL: {}", info.release_url)));
+                if !info.notes.is_empty() {
+                    c = c.push(small(info.notes.clone()));
+                }
+            }
+            Err(e) => {
+                c = c.push(small(format!("Update check note: {e}")));
+            }
+        }
+    }
+    c.into()
+}
+
+fn startup_wizard(app: &App) -> El<'_> {
+    let step = app.wizard_step;
+    let step_title = match step {
+        0 => "Step 1 of 4 — Welcome to AI Photo Defense",
+        1 => "Step 2 of 4 — Choose How You Want to Work",
+        2 => "Step 3 of 4 — Updates & Optional Local Models",
+        _ => "Step 4 of 4 — Ready to Start",
+    };
+
+    let body: El<'_> = match step {
+        0 => column![
+            t("Private, offline-first media protection for Windows, macOS, and Linux."),
+            small("• 100% local processing: your photos, videos, and audio never leave your computer."),
+            small("• Strips EXIF/GPS/XMP/ICC metadata, scans for QR codes and credentials, and applies permanent redaction."),
+            small("• No accounts, no subscriptions, and no OS security bypasses required."),
+            small("Note: Unsigned development builds may show a standard Windows/macOS first-run prompt; click 'More info -> Run anyway' or build from source."),
+        ]
+        .spacing(6)
+        .into(),
+        1 => column![
+            t("Pick a mode (you can switch anytime from the top bar or Main Menu):"),
+            row![
+                btn("Essential Mode (Simple)", Some(Message::Mode(Mode::Essential))),
+                small("Best for everyday users: import photos, scan, redact, and export cleanly."),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+            row![
+                btn("Professional Studio", Some(Message::Mode(Mode::Professional))),
+                small("Full non-destructive editor, color studio, layers, media & redaction tools."),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+            row![
+                btn("Technical & Validation Center", Some(Message::Mode(Mode::Technical))),
+                small("Run quality metrics, 23-transform durability tests, forensics, and local model validation."),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+            row![
+                btn("Tutorial Mode", Some(Message::Mode(Mode::Tutorial))),
+                small("Guided 5-step walkthrough for first-time users."),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(8)
+        .into(),
+        2 => column![
+            t("Optional GitHub Update Check & Local AI Models"),
+            small("AI Photo Defense never phones home in the background. Click below only when you want to check GitHub for a newer release:"),
+            update_status_block(app),
+            horizontal_rule(1),
+            small("Optional local AI models (UltraFace .onnx, CLIP .safetensors, Whisper) can be selected in Technical > Model Library."),
+        ]
+        .spacing(8)
+        .into(),
+        _ => column![
+            t("You are all set!"),
+            small("Choose where to go next:"),
+            row![
+                btn("Open Main Menu", Some(Message::ShowWizard(false))),
+                btn("Start Interactive Tutorial", Some(Message::Mode(Mode::Tutorial))),
+                btn("Import Photos Now", Some(Message::OpenDialog)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(8)
+        .into(),
+    };
+
+    let nav = row![
+        btn(
+            "Back",
+            (step > 0).then_some(Message::WizardStep(step.saturating_sub(1)))
+        ),
+        horizontal_space(),
+        btn("Skip Wizard", Some(Message::ShowWizard(false))),
+        if step < 3 {
+            button(t("Next"))
+                .padding([4, 14])
+                .style(theme::primary)
+                .on_press(Message::WizardStep(step + 1))
+        } else {
+            button(t("Finish"))
+                .padding([4, 14])
+                .style(theme::primary)
+                .on_press(Message::ShowWizard(false))
+        },
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    container(
+        container(
+            column![
+                text("AI Photo Defense — Startup Wizard").size(FONT_TITLE),
+                small(step_title),
+                horizontal_rule(1),
+                body,
+                horizontal_rule(1),
+                nav,
+            ]
+            .spacing(12),
+        )
+        .padding(24)
+        .width(740)
+        .style(theme::section_header),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(Alignment::Center)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn home(app: &App) -> El<'_> {
+    let content = column![
+        text("AI Photo Defense — Main Menu").size(FONT_TITLE),
+        small("Offline-first media privacy workstation for Windows, macOS, and Linux."),
+        horizontal_rule(1),
+        row![
+            btn("Import Photos", Some(Message::OpenDialog)),
+            btn("Import Folder", Some(Message::OpenFolderDialog)),
+            btn("Open Startup Wizard", Some(Message::ShowWizard(true))),
+            btn("Start Tutorial Mode", Some(Message::Mode(Mode::Tutorial))),
+        ]
+        .spacing(8),
+        horizontal_rule(1),
+        t("Workspaces"),
+        row![
+            container(
+                column![
+                    t("Essential Mode"),
+                    small("Simple one-screen workflow: import, Privacy Scan, conceal/redact, and verified export."),
+                    btn("Open Essential", Some(Message::Mode(Mode::Essential))),
+                ]
+                .spacing(6),
+            )
+            .padding(12)
+            .width(Length::Fill)
+            .style(theme::section_header),
+            container(
+                column![
+                    t("Professional Studio"),
+                    small("Full editor with Color Studio, layers, masks, audio/video redaction, and media catalog."),
+                    btn("Open Professional", Some(Message::Mode(Mode::Professional))),
+                ]
+                .spacing(6),
+            )
+            .padding(12)
+            .width(Length::Fill)
+            .style(theme::section_header),
+            container(
+                column![
+                    t("Technical & Validation"),
+                    small("Validation Center, 23-transform durability, forensics, model library, and diagnostics."),
+                    btn("Open Technical", Some(Message::Mode(Mode::Technical))),
+                ]
+                .spacing(6),
+            )
+            .padding(12)
+            .width(Length::Fill)
+            .style(theme::section_header),
+        ]
+        .spacing(10),
+        horizontal_rule(1),
+        t("Updates & Releases"),
+        update_status_block(app),
+    ]
+    .spacing(10);
+
+    scrollable(container(content).padding(20))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+fn tutorial(app: &App) -> El<'_> {
+    let step = app.tutorial_step;
+    let steps = [
+        (
+            "1. Import Your Photo or Video",
+            "Click 'Import Photos' (or drag & drop a file onto the window). Your original file is never modified.",
+        ),
+        (
+            "2. Run a Local Privacy Scan",
+            "Click 'Scan' (Ctrl+P) to detect hidden EXIF/GPS location data, camera serial numbers, QR codes, and credentials.",
+        ),
+        (
+            "3. Redact Sensitive Areas",
+            "Use Rectangle/Ellipse/Brush tools in Essential or Professional mode. For secrets/QR codes, always use solid opaque redaction (blur can be reversed).",
+        ),
+        (
+            "4. Export a Verified Clean Copy",
+            "Click 'Export' (Ctrl+E). AI Photo Defense strips all metadata, saves a new copy, and re-opens the exported file to verify it is clean.",
+        ),
+        (
+            "5. Verify in Validation Center",
+            "Switch to Technical > Defense Lab to inspect image quality (PSNR, SSIM, Delta-E), run 23-transform durability tests, or test with local AI models.",
+        ),
+    ];
+
+    let mut list = column![
+        text("Interactive Tutorial Mode").size(FONT_TITLE),
+        small("Learn the safe privacy workflow in 5 quick steps."),
+        horizontal_rule(1),
+    ]
+    .spacing(8);
+
+    for (idx, (title, desc)) in steps.iter().enumerate() {
+        let active = idx as u8 == step;
+        list = list.push(
+            container(
+                column![
+                    row![
+                        t(*title),
+                        horizontal_space(),
+                        btn(
+                            if active { "Current Step" } else { "View" },
+                            Some(Message::TutorialStep(idx as u8))
+                        ),
+                    ]
+                    .align_y(Alignment::Center),
+                    small(*desc),
+                ]
+                .spacing(4),
+            )
+            .padding(10)
+            .width(Length::Fill)
+            .style(if active {
+                theme::banner
+            } else {
+                theme::section_header
+            }),
+        );
+    }
+
+    list = list.push(
+        row![
+            btn(
+                "Previous",
+                (step > 0).then_some(Message::TutorialStep(step.saturating_sub(1)))
+            ),
+            btn(
+                "Next",
+                (step < 4).then_some(Message::TutorialStep(step + 1))
+            ),
+            horizontal_space(),
+            btn(
+                "Try Essential Mode Now",
+                Some(Message::Mode(Mode::Essential))
+            ),
+            btn("Back to Main Menu", Some(Message::Mode(Mode::Home))),
+        ]
+        .spacing(8),
+    );
+
+    scrollable(container(list).padding(20))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }
