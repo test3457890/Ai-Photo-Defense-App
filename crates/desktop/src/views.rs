@@ -2559,28 +2559,28 @@ fn media_panel<'a>(app: &'a App, m: &'a MediaEntry, compact: bool) -> El<'a> {
 }
 
 fn models(app: &App) -> El<'_> {
-    let voice_dir = app
-        .voice_model_dir
-        .as_ref()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "none".into());
-    let face_model = app
-        .face_model_path
-        .as_ref()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "none".into());
+    let show = |p: &Option<std::path::PathBuf>| {
+        p.as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "none".into())
+    };
+    let line = |label: &'static str, msg: Message, value: String| -> El<'_> {
+        row![btn(label, Some(msg)), small(value)]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into()
+    };
     column![
-        row![
-            btn("Choose voice model folder", Some(Message::ChooseVoiceModelFolder)),
-            small(format!("Voice model folder: {voice_dir}")),
-            btn("Choose face model (.onnx)", Some(Message::ChooseFaceModel)),
-            small(format!("Face model: {face_model}")),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
-        small("Face, person, object, document, segmentation and OCR detectors need licence-reviewed local models (see docs/research/MODEL_LICENSES.md)."),
+        small("LOCAL MODELS (chosen by you; nothing is downloaded)"),
+        line("Choose voice model folder", Message::ChooseVoiceModelFolder, format!("Voice model folder: {}", show(&app.voice_model_dir))),
+        line("Choose face model (.onnx)", Message::ChooseFaceModel, format!("Face model: {}", show(&app.face_model_path))),
+        small("Person, object, document, segmentation and OCR detectors need licence-reviewed local models (see docs/research/MODEL_LICENSES.md)."),
         small("Accepted formats: SafeTensors (and ONNX for face detection) with an independently reviewed manifest (SHA-256, size, code and weight licences). Pickle and executable formats are refused. Verify with: photo-defense verify-model MODEL MANIFEST."),
         small("Downloads and updates: not implemented. The application makes no network connections."),
+        horizontal_rule(1),
+        small("C2PA CONTENT CREDENTIALS (OPTIONAL EXPORT SIGNING)"),
+        line("Choose C2PA cert (.pem)", Message::ChooseC2paCert, format!("Certificate: {}", show(&app.c2pa_cert_path))),
+        line("Choose C2PA key (.pem)", Message::ChooseC2paKey, format!("Private key: {}", show(&app.c2pa_key_path))),
     ]
     .spacing(6)
     .into()

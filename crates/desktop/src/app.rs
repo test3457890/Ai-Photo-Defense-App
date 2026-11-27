@@ -497,6 +497,10 @@ pub enum Message {
     Play(usize, bool),
     PlayReady(Result<Pcm, String>, f32),
     StopAudio,
+    ChooseC2paCert,
+    C2paCertChosen(Option<PathBuf>),
+    ChooseC2paKey,
+    C2paKeyChosen(Option<PathBuf>),
     ChooseVoiceModelFolder,
     VoiceModelFolderChosen(Option<PathBuf>),
     ProtectVoice,
@@ -574,6 +578,8 @@ pub struct App {
     pub forensics: Option<Box<photo_privacy::forensics::ForensicReport>>,
     pub perf: Perf,
     pub sys: Option<sysinfo::System>,
+    pub c2pa_cert_path: Option<PathBuf>,
+    pub c2pa_key_path: Option<PathBuf>,
     pub media: Vec<MediaEntry>,
     pub selected_media: Option<usize>,
     pub focus_media: bool,
@@ -771,6 +777,42 @@ fn scan_with_optional_faces(
     _face_model: Option<&Path>,
 ) -> Result<ScanReport, String> {
     Ok(photo_pipeline::scan_photo(photo, profile))
+}
+
+#[cfg(feature = "c2pa")]
+fn sign_exported_c2pa(
+    saved: &Path,
+    edits: &EditStack,
+    cert_path: &Path,
+    key_path: &Path,
+) -> anyhow::Result<()> {
+    let cert_pem = std::fs::read(cert_path)?;
+    let key_pem = std::fs::read(key_path)?;
+    let bytes = std::fs::read(saved)?;
+    let mut actions = vec!["c2pa.metadata_removed"];
+    if edits
+        .active()
+        .iter()
+        .any(|op| matches!(op, Operation::Crop(_) | Operation::CropAspect(_)))
+    {
+        actions.push("c2pa.cropped");
+    }
+    if edits.active().iter().any(|op| op.is_secure_redaction()) {
+        actions.push("c2pa.redacted");
+    }
+    let signed = photo_privacy::c2pa_cred::sign_bytes(&bytes, &cert_pem, &key_pem, &actions)?;
+    std::fs::write(saved, signed)?;
+    Ok(())
+}
+
+#[cfg(not(feature = "c2pa"))]
+fn sign_exported_c2pa(
+    _saved: &Path,
+    _edits: &EditStack,
+    _cert_path: &Path,
+    _key_path: &Path,
+) -> anyhow::Result<()> {
+    anyhow::bail!("Built without the `c2pa` feature; rebuild with `--features c2pa`.")
 }
 
 /// Background media inspection: bounded read, content detection, structure, audio analysis.
@@ -1149,6 +1191,8 @@ impl App {
             lens: 0.,
             band: 0,
             active_layer: None,
+            c2pa_cert_path: None,
+            c2pa_key_path: None,
             editing: false,
             profile: "Social Media".into(),
             focused_finding: None,
@@ -1423,6 +1467,14 @@ impl App {
                     .map(|p| p.to_string_lossy().into_owned()),
                 face_model_path: self
                     .face_model_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
+                c2pa_cert_path: self
+                    .c2pa_cert_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
+                c2pa_key_path: self
+                    .c2pa_key_path
                     .as_ref()
                     .map(|p| p.to_string_lossy().into_owned()),
             },
@@ -2970,6 +3022,40 @@ impl App {
                     }
                 }
             }
+            Message::ChooseC2paCert => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("PEM certificate", &["pem", "crt", "cer"])
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::C2paCertChosen,
+                );
+            }
+            Message::C2paCertChosen(Some(p)) => {
+                self.c2pa_cert_path = Some(p);
+                self.dirty_project = true;
+            }
+            Message::C2paCertChosen(None) => {}
+            Message::ChooseC2paKey => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("PEM private key", &["pem", "key"])
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::C2paKeyChosen,
+                );
+            }
+            Message::C2paKeyChosen(Some(p)) => {
+                self.c2pa_key_path = Some(p);
+                self.dirty_project = true;
+            }
+            Message::C2paKeyChosen(None) => {}
             Message::PaneResized(e) => self.panes.resize(e.split, e.ratio),
             Message::PaneDragged(pane_grid::DragEvent::Dropped { pane, target }) => {
                 self.panes.drop(pane, target)
@@ -3022,6 +3108,8 @@ impl App {
         self.selected = None;
         self.profile = p.settings.profile.clone();
         self.quality = p.settings.quality;
+        self.c2pa_cert_path = p.settings.c2pa_cert_path.as_ref().map(PathBuf::from);
+        self.c2pa_key_path = p.settings.c2pa_key_path.as_ref().map(PathBuf::from);
         self.voice_model_dir = p.settings.voice_model_dir.as_ref().map(PathBuf::from);
         self.face_model_path = p.settings.face_model_path.as_ref().map(PathBuf::from);
         self.pending_restore = Some(p);
@@ -3058,6 +3146,7 @@ impl App {
         let (f, q) = (self.format, self.quality);
         let profile = profile_by_name(&self.profile);
         let (high, auto) = (self.high_assurance, self.auto_redact);
+        let c2pa_creds = self.c2pa_cert_path.clone().zip(self.c2pa_key_path.clone());
         let aspect = if self.mode == Mode::Essential {
             self.essential_aspect
         } else {
@@ -3135,6 +3224,9 @@ impl App {
                                 return Ok(ExportState::Blocked(w));
                             }
                             let saved = photo_pipeline::publish(&prepared, &path, &dir, f, accept)?;
+                            if let Some((cert_p, key_p)) = &c2pa_creds {
+                                sign_exported_c2pa(&saved.image, &edits, cert_p, key_p)?;
+                            }
                             photo_log::event(
                                 Level::Info,
                                 Component::Export,

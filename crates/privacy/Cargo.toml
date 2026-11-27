@@ -20,11 +20,14 @@ regex = { version = "1.12", default-features = false, features = ["std", "perf",
 rxing = { version = "0.9.4", default-features = false, features = ["decoders", "multi_barcode_readers", "full_barcode_format_support", "encoding_rs"] }
 tract-onnx = { version = "0.23.10", optional = true }
 photo-models = { workspace = true, optional = true }
+c2pa = { version = "0.92", default-features = false, features = ["rust_native_crypto", "file_io"], optional = true }
 
 [features]
 default = []
 faces = ["dep:tract-onnx", "dep:photo-models"]
+c2pa = ["dep:c2pa"]
 
 [dev-dependencies]
 tempfile.workspace = true
+rcgen = "0.14"
 rxing = { version = "0.9.4", default-features = false, features = ["encoders", "decoders", "multi_barcode_readers", "full_barcode_format_support", "encoding_rs"] }

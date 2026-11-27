@@ -40,6 +40,9 @@ pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub voice_model_dir: Option<String>,
     pub face_model_path: Option<String>,
+    pub c2pa_cert_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub c2pa_key_path: Option<String>,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -50,6 +53,8 @@ impl Default for Settings {
             mode: "Professional".into(),
             voice_model_dir: None,
             face_model_path: None,
+            c2pa_cert_path: None,
+            c2pa_key_path: None,
         }
     }
 }

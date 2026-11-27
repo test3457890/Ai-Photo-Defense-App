@@ -121,6 +121,13 @@ fn jpeg_info(b: &[u8]) -> Option<JpegInfo> {
 }
 
 fn c2pa_status(b: &[u8]) -> String {
+    #[cfg(feature = "c2pa")]
+    {
+        let s = crate::c2pa_cred::inspect_status(b);
+        if s != "No C2PA manifest found" {
+            return s;
+        }
+    }
     let jumbf = b.windows(4).any(|w| w == b"jumb") && b.windows(4).any(|w| w == b"c2pa");
     let png_chunk = b.windows(4).any(|w| w == b"caBX");
     if jumbf || png_chunk {

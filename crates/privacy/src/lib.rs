@@ -11,6 +11,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
+#[cfg(feature = "c2pa")]
+pub mod c2pa_cred;
 pub mod codes;
 #[cfg(feature = "faces")]
 pub mod faces;
