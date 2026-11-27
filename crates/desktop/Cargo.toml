@@ -30,3 +30,4 @@ serde_json.workspace = true
 [features]
 default = []
 voice-protect = ["photo-media/voice-protect"]
+faces = ["photo-privacy/faces"]

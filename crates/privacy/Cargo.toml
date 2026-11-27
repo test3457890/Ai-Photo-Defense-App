@@ -18,6 +18,13 @@ kamadak-exif = "0.6.2"
 regex = { version = "1.12", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl"] }
 # No image codecs or networking: decoding uses our own bounded luma buffer.
 rxing = { version = "0.9.4", default-features = false, features = ["decoders", "multi_barcode_readers", "full_barcode_format_support", "encoding_rs"] }
+tract-onnx = { version = "0.23.10", optional = true }
+photo-models = { workspace = true, optional = true }
+
+[features]
+default = []
+faces = ["dep:tract-onnx", "dep:photo-models"]
 
 [dev-dependencies]
+tempfile.workspace = true
 rxing = { version = "0.9.4", default-features = false, features = ["encoders", "decoders", "multi_barcode_readers", "full_barcode_format_support", "encoding_rs"] }

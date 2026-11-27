@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub mod codes;
+#[cfg(feature = "faces")]
+pub mod faces;
 pub mod forensics;
 pub mod metadata;
 pub mod profiles;
@@ -260,9 +262,30 @@ pub struct ScanInput<'a> {
 }
 
 pub fn scan(input: ScanInput<'_>, profile: &Profile) -> ScanReport {
+    scan_with_faces(input, profile, None)
+}
+
+pub fn scan_with_faces(
+    input: ScanInput<'_>,
+    profile: &Profile,
+    face_regions: Option<&[Rect]>,
+) -> ScanReport {
     let mut findings = vec![];
     let mut spans = input.extra_text;
     let mut container = String::new();
+    let has_faces = face_regions.is_some();
+    if let Some(regions) = face_regions {
+        for &r in regions {
+            findings.push(Finding::new(
+                Category::Face,
+                Evidence::Contextual,
+                Source::Model,
+                Some(r),
+                "Detected face".into(),
+                None,
+            ));
+        }
+    }
     if profile.wants(Detector::Metadata) {
         let m = metadata::inspect(input.bytes);
         container = m.container.clone();
@@ -313,7 +336,15 @@ pub fn scan(input: ScanInput<'_>, profile: &Profile) -> ScanReport {
             available: has_ocr,
             note: if has_ocr { "OCR text supplied".into() } else { "No OCR model installed: text visible in pixels was NOT read".into() },
         },
-        DetectorStatus { detector: Detector::FaceAndPerson, available: false, note: "No verified face/person model installed: faces and people were NOT detected".into() },
+        DetectorStatus {
+            detector: Detector::FaceAndPerson,
+            available: has_faces,
+            note: if has_faces {
+                "Local UltraFace ONNX model ran (faces only; person/reflection/name-tag/tattoo not examined)".into()
+            } else {
+                "No verified face/person model installed: faces and people were NOT detected".into()
+            },
+        },
         DetectorStatus { detector: Detector::Objects, available: false, note: "No verified object/document model installed: screens, documents, plates and objects were NOT detected".into() },
     ];
     let available: BTreeSet<Detector> = detectors
@@ -327,7 +358,9 @@ pub fn scan(input: ScanInput<'_>, profile: &Profile) -> ScanReport {
         .copied()
         .filter(|c| {
             let d = c.detector();
-            // Text categories visible only in pixels need OCR.
+            if d == Detector::FaceAndPerson {
+                return !(has_faces && *c == Category::Face);
+            }
             // Text categories visible only in pixels need OCR; codes and metadata alone are partial.
             !(available.contains(&d) && (d != Detector::Text || has_ocr)) && d != Detector::Manual
         })

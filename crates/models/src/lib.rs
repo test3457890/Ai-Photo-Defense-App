@@ -26,6 +26,14 @@ pub struct Manifest {
 }
 impl Manifest {
     pub fn validate(&self) -> Result<()> {
+        self.validate_with_ext(".safetensors")
+    }
+
+    pub fn validate_onnx(&self) -> Result<()> {
+        self.validate_with_ext(".onnx")
+    }
+
+    fn validate_with_ext(&self, ext: &str) -> Result<()> {
         ensure!(
             self.schema_version == 2,
             "Unsupported manifest schema {} (version 2 separates local-use and redistribution approval)",
@@ -43,9 +51,9 @@ impl Manifest {
         ensure!(
             !self.filename.is_empty()
                 && !self.filename.contains(['/', '\\', ':'])
-                && self.filename.ends_with(".safetensors")
+                && self.filename.ends_with(ext)
                 && self.filename.len() <= 160,
-            "Only flat .safetensors filenames are permitted"
+            "Only flat {ext} filenames are permitted"
         );
         ensure!(
             self.sha256.len() == 64 && self.sha256.chars().all(|c| c.is_ascii_hexdigit()),
@@ -110,6 +118,36 @@ pub fn verify(path: &Path, manifest: &Manifest) -> Result<VerifiedModel> {
         id: manifest.id.clone(),
         sha256: hash,
         tensors: model.len(),
+        efficacy_verified: false,
+    })
+}
+
+/// Verifies an ONNX model file against a schema-2 manifest before loading it in `tract-onnx`.
+pub fn verify_onnx(path: &Path, manifest: &Manifest) -> Result<VerifiedModel> {
+    manifest.validate_onnx()?;
+    let meta = std::fs::symlink_metadata(path)?;
+    ensure!(
+        meta.is_file() && !meta.file_type().is_symlink(),
+        "Model must be a regular non-symlink file"
+    );
+    ensure!(meta.len() == manifest.size_bytes, "Model size mismatch");
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(manifest.size_bytes + 1)
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() as u64 == manifest.size_bytes,
+        "Model changed or size mismatch"
+    );
+    let hash = format!("{:x}", Sha256::digest(&bytes));
+    ensure!(
+        hash.eq_ignore_ascii_case(&manifest.sha256),
+        "Model integrity check failed"
+    );
+    Ok(VerifiedModel {
+        id: manifest.id.clone(),
+        sha256: hash,
+        tensors: 0,
         efficacy_verified: false,
     })
 }

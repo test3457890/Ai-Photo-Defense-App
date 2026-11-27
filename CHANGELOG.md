@@ -3,6 +3,7 @@
 ## 0.6.0 (unreleased)
 
 - Optional `voice-protect` feature (`photo-media`, `photo-cli`, `photo-desktop`): pure-Rust Candle 0.11 ECAPA-TDNN speaker encoder (`speechbrain/spkrec-ecapa-voxceleb`, Apache-2.0) with differentiable 80-bin Fbank, `EcapaObjective` for `photo_media::protect`, offline SafeTensors converter (`tools/convert_ecapa.py`), CLI `audio-protect --model DIR`, and Desktop "Protect voice" + "Choose voice model folder" controls. Refuses without a local SafeTensors model; external transfer and parity remain unverified without converted weights.
+- Optional `faces` feature (`photo-privacy`, `photo-cli`, `photo-desktop`): pure-Rust `tract-onnx` face detection (`UltraFace RFB-320`, MIT) with schema-2 `.onnx` manifest verification (`photo_models::verify_onnx`), `Category::Face` findings, `not_examined` removal only when a model runs, and Professional mode `"Select all faces"` + per-face `"Select"` buttons.
 
 ## 0.5.0 release candidate (Part 5), 2026-11-26
 
