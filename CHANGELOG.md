@@ -13,6 +13,7 @@ Integration of Antigravity's Part 5 branches, reviewed and verified by Claude. H
 - Desktop shows optional-feature controls only when the feature is built in.
 
 Not merged: H.264 video frames, video tracking and Opus decoding. They depend on `filmcraft-*` crates published by an account with no verifiable link to the FilmCraft project; they will be ported to the official `storytold/craft-libs` before merging.
+- Optional `video` feature (`photo-media`, `photo-cli`, `photo-desktop`): pure-Rust H.264 MP4/MOV decode, scrub/play preview, time-ranged rectangle blur/blackout redaction, clean metadata-free MP4 re-encode with audio passthrough & reopen verification (`filmcraft-h264` + `filmcraft-h264enc`, MIT OR Apache-2.0), and CLI `video-redact`. Video adversarial protection remains out of scope (no licensed model).
 
 ## 0.5.0 release candidate (Part 5), 2026-11-26
 

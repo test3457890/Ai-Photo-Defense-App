@@ -11,38 +11,43 @@ use photo_privacy::{Category, Evidence, Finding, Source};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Copy)]
-struct BoxRef {
-    kind: [u8; 4],
-    start: usize,
-    header: usize,
-    end: usize,
+pub(crate) struct BoxRef {
+    pub(crate) kind: [u8; 4],
+    pub(crate) start: usize,
+    pub(crate) header: usize,
+    pub(crate) end: usize,
 }
 impl BoxRef {
-    fn payload(&self) -> usize {
+    pub(crate) fn payload(&self) -> usize {
         self.start + self.header
     }
-    fn is(&self, k: &[u8; 4]) -> bool {
+    pub(crate) fn is(&self, k: &[u8; 4]) -> bool {
         &self.kind == k
     }
 }
 
-fn u16_at(b: &[u8], i: usize) -> Option<u16> {
+pub(crate) fn u16_at(b: &[u8], i: usize) -> Option<u16> {
     Some(u16::from_be_bytes(
         b.get(i..i.checked_add(2)?)?.try_into().ok()?,
     ))
 }
-fn u32_at(b: &[u8], i: usize) -> Option<u32> {
+pub(crate) fn u32_at(b: &[u8], i: usize) -> Option<u32> {
     Some(u32::from_be_bytes(
         b.get(i..i.checked_add(4)?)?.try_into().ok()?,
     ))
 }
-fn u64_at(b: &[u8], i: usize) -> Option<u64> {
+pub(crate) fn u64_at(b: &[u8], i: usize) -> Option<u64> {
     Some(u64::from_be_bytes(
         b.get(i..i.checked_add(8)?)?.try_into().ok()?,
     ))
 }
 
-fn children(b: &[u8], start: usize, end: usize, budget: &mut usize) -> Result<Vec<BoxRef>> {
+pub(crate) fn children(
+    b: &[u8],
+    start: usize,
+    end: usize,
+    budget: &mut usize,
+) -> Result<Vec<BoxRef>> {
     let mut out = vec![];
     let mut i = start;
     while i + 8 <= end {
@@ -80,7 +85,7 @@ fn children(b: &[u8], start: usize, end: usize, budget: &mut usize) -> Result<Ve
     Ok(out)
 }
 /// Child list of a container; `meta` is a full box in ISO files but not in QuickTime.
-fn kids(b: &[u8], p: &BoxRef, budget: &mut usize) -> Result<Vec<BoxRef>> {
+pub(crate) fn kids(b: &[u8], p: &BoxRef, budget: &mut usize) -> Result<Vec<BoxRef>> {
     if p.is(b"meta") {
         let iso = b.get(p.payload() + 8..p.payload() + 12) == Some(b"hdlr");
         let off = if iso { 4 } else { 0 };
@@ -91,7 +96,7 @@ fn kids(b: &[u8], p: &BoxRef, budget: &mut usize) -> Result<Vec<BoxRef>> {
     }
     children(b, p.payload(), p.end, budget)
 }
-fn find<'a>(list: &'a [BoxRef], k: &[u8; 4]) -> Option<&'a BoxRef> {
+pub(crate) fn find<'a>(list: &'a [BoxRef], k: &[u8; 4]) -> Option<&'a BoxRef> {
     list.iter().find(|x| x.is(k))
 }
 
