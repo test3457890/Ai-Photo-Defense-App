@@ -379,6 +379,7 @@ pub enum Message {
     MenuClose,
     Mode(Mode),
     Appearance(theme::Appearance),
+    UiScale(f64),
     Fullscreen(bool),
     Group(&'static str),
     OpenDialog,
@@ -517,6 +518,7 @@ pub enum Message {
 pub struct App {
     pub mode: Mode,
     pub appearance: theme::Appearance,
+    pub ui_scale: f64,
     pub menu: Option<Menu>,
     pub fullscreen: bool,
     pub panes: pane_grid::State<Pane>,
@@ -1149,6 +1151,7 @@ impl App {
         let mut app = Self {
             mode: Mode::Professional,
             appearance: theme::Appearance::Graphite,
+            ui_scale: 1.0,
             menu: None,
             fullscreen: false,
             panes: default_panes(),
@@ -1477,6 +1480,7 @@ impl App {
                     .c2pa_key_path
                     .as_ref()
                     .map(|p| p.to_string_lossy().into_owned()),
+                ui_scale: self.ui_scale,
             },
             ..Default::default()
         }
@@ -1529,6 +1533,10 @@ impl App {
             }
             Message::Appearance(a) => {
                 self.appearance = a;
+                self.menu = None;
+            }
+            Message::UiScale(s) => {
+                self.ui_scale = s.clamp(0.85, 2.0);
                 self.menu = None;
             }
             Message::Fullscreen(f) => {
@@ -3463,6 +3471,7 @@ pub fn run() -> iced::Result {
     iced::application("AI Photo Defense", App::update, views::view)
         .subscription(App::subscription)
         .theme(|a: &App| theme::theme(a.appearance))
+        .scale_factor(|a: &App| a.ui_scale)
         .default_font(iced::Font::with_name(if cfg!(target_os = "windows") {
             "Segoe UI"
         } else if cfg!(target_os = "macos") {

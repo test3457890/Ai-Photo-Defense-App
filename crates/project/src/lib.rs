@@ -43,6 +43,11 @@ pub struct Settings {
     pub c2pa_cert_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub c2pa_key_path: Option<String>,
+    #[serde(default = "default_ui_scale")]
+    pub ui_scale: f64,
+}
+fn default_ui_scale() -> f64 {
+    1.0
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -55,6 +60,7 @@ impl Default for Settings {
             face_model_path: None,
             c2pa_cert_path: None,
             c2pa_key_path: None,
+            ui_scale: 1.0,
         }
     }
 }

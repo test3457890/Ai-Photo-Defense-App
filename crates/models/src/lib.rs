@@ -1,4 +1,6 @@
 //! Offline, fail-closed model verification. No remote code execution or pickle support.
+#[cfg(feature = "ask-ai")]
+pub mod ai_assistant;
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
