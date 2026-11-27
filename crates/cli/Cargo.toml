@@ -31,3 +31,4 @@ tempfile.workspace = true
 default = []
 experimental-clip = ["dep:photo-engine", "photo-engine/clip"]
 stt = ["photo-media/stt"]
+c2pa = ["photo-privacy/c2pa"]

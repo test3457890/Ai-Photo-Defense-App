@@ -6,6 +6,9 @@ all-features = false
 # Unmaintained/unsound informational advisories are reviewed in docs/SECURITY_REVIEW.md.
 unmaintained = "workspace"
 yanked = "deny"
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "Transitive via c2pa_raw_crypto 0.3.0 (optional c2pa feature); signing uses ES256 only, not RSA" },
+]
 
 [licenses]
 confidence-threshold = 0.9

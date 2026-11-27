@@ -1829,7 +1829,7 @@ fn technical(app: &App) -> El<'_> {
         TechPage::Validation => validation(app),
         TechPage::Forensics => forensics(app),
         TechPage::Lab => lab(app),
-        TechPage::Models => models(),
+        TechPage::Models => models(app),
         TechPage::History => history(app),
         TechPage::Formats => formats(app),
     };
@@ -2526,12 +2526,36 @@ fn media_panel<'a>(app: &'a App, m: &'a MediaEntry, compact: bool) -> El<'a> {
     c.into()
 }
 
-fn models() -> El<'static> {
+fn models(app: &App) -> El<'_> {
+    let cert = app
+        .c2pa_cert_path
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "none".into());
+    let key = app
+        .c2pa_key_path
+        .as_ref()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "none".into());
     column![
         small("Installed models: none."),
         small("Face, person, object, document, segmentation and OCR detectors need licence-reviewed local models (see docs/research/MODEL_LICENSES.md)."),
         small("Accepted formats: SafeTensors with an independently reviewed manifest (SHA-256, size, code and weight licences). Pickle and executable formats are refused. Verify with: photo-defense verify-model MODEL MANIFEST."),
         small("Downloads and updates: not implemented. The application makes no network connections."),
+        horizontal_rule(1),
+        small("C2PA CONTENT CREDENTIALS (OPTIONAL EXPORT SIGNING)"),
+        row![
+            btn("Choose C2PA cert (.pem)", Some(Message::ChooseC2paCert)),
+            small(format!("Certificate: {cert}")),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+        row![
+            btn("Choose C2PA key (.pem)", Some(Message::ChooseC2paKey)),
+            small(format!("Private key: {key}")),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
     ]
     .spacing(6)
     .into()

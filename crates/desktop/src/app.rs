@@ -497,6 +497,10 @@ pub enum Message {
     Play(usize, bool),
     PlayReady(Result<Pcm, String>, f32),
     StopAudio,
+    ChooseC2paCert,
+    C2paCertChosen(Option<PathBuf>),
+    ChooseC2paKey,
+    C2paKeyChosen(Option<PathBuf>),
     PaneResized(pane_grid::ResizeEvent),
     PaneDragged(pane_grid::DragEvent),
     PaneMaximize(Pane),
@@ -574,6 +578,8 @@ pub struct App {
     pub seg_end: String,
     pub player: Option<Player>,
     pub playing: Option<(usize, bool)>,
+    pub c2pa_cert_path: Option<PathBuf>,
+    pub c2pa_key_path: Option<PathBuf>,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -726,6 +732,42 @@ fn set_field(a: &mut Adjustments, f: Field, band: usize, v: f32) {
         Field::LutStrength => a.lut_strength = v.clamp(0., 1.),
         Field::Opacity => {}
     }
+}
+
+#[cfg(feature = "c2pa")]
+fn sign_exported_c2pa(
+    saved: &Path,
+    edits: &EditStack,
+    cert_path: &Path,
+    key_path: &Path,
+) -> anyhow::Result<()> {
+    let cert_pem = std::fs::read(cert_path)?;
+    let key_pem = std::fs::read(key_path)?;
+    let bytes = std::fs::read(saved)?;
+    let mut actions = vec!["c2pa.metadata_removed"];
+    if edits
+        .active()
+        .iter()
+        .any(|op| matches!(op, Operation::Crop(_) | Operation::CropAspect(_)))
+    {
+        actions.push("c2pa.cropped");
+    }
+    if edits.active().iter().any(|op| op.is_secure_redaction()) {
+        actions.push("c2pa.redacted");
+    }
+    let signed = photo_privacy::c2pa_cred::sign_bytes(&bytes, &cert_pem, &key_pem, &actions)?;
+    std::fs::write(saved, signed)?;
+    Ok(())
+}
+
+#[cfg(not(feature = "c2pa"))]
+fn sign_exported_c2pa(
+    _saved: &Path,
+    _edits: &EditStack,
+    _cert_path: &Path,
+    _key_path: &Path,
+) -> anyhow::Result<()> {
+    anyhow::bail!("Built without the `c2pa` feature; rebuild with `--features c2pa`.")
 }
 
 /// Background media inspection: bounded read, content detection, structure, audio analysis.
@@ -1104,6 +1146,8 @@ impl App {
             seg_end: String::new(),
             player: None,
             playing: None,
+            c2pa_cert_path: None,
+            c2pa_key_path: None,
         };
         app.refresh_library();
         app
@@ -1326,6 +1370,14 @@ impl App {
                 format: self.format.extension().into(),
                 quality: self.quality,
                 mode: self.mode.to_string(),
+                c2pa_cert_path: self
+                    .c2pa_cert_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
+                c2pa_key_path: self
+                    .c2pa_key_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
             },
             ..Default::default()
         }
@@ -2752,6 +2804,40 @@ impl App {
                 }
                 self.playing = None;
             }
+            Message::ChooseC2paCert => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("PEM certificate", &["pem", "crt", "cer"])
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::C2paCertChosen,
+                );
+            }
+            Message::C2paCertChosen(Some(p)) => {
+                self.c2pa_cert_path = Some(p);
+                self.dirty_project = true;
+            }
+            Message::C2paCertChosen(None) => {}
+            Message::ChooseC2paKey => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("PEM private key", &["pem", "key"])
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::C2paKeyChosen,
+                );
+            }
+            Message::C2paKeyChosen(Some(p)) => {
+                self.c2pa_key_path = Some(p);
+                self.dirty_project = true;
+            }
+            Message::C2paKeyChosen(None) => {}
             Message::PaneResized(e) => self.panes.resize(e.split, e.ratio),
             Message::PaneDragged(pane_grid::DragEvent::Dropped { pane, target }) => {
                 self.panes.drop(pane, target)
@@ -2804,6 +2890,8 @@ impl App {
         self.selected = None;
         self.profile = p.settings.profile.clone();
         self.quality = p.settings.quality;
+        self.c2pa_cert_path = p.settings.c2pa_cert_path.as_ref().map(PathBuf::from);
+        self.c2pa_key_path = p.settings.c2pa_key_path.as_ref().map(PathBuf::from);
         self.pending_restore = Some(p);
         if missing > 0 {
             photo_log::warn(
@@ -2838,6 +2926,7 @@ impl App {
         let (f, q) = (self.format, self.quality);
         let profile = profile_by_name(&self.profile);
         let (high, auto) = (self.high_assurance, self.auto_redact);
+        let c2pa_creds = self.c2pa_cert_path.clone().zip(self.c2pa_key_path.clone());
         let aspect = if self.mode == Mode::Essential {
             self.essential_aspect
         } else {
@@ -2915,6 +3004,9 @@ impl App {
                                 return Ok(ExportState::Blocked(w));
                             }
                             let saved = photo_pipeline::publish(&prepared, &path, &dir, f, accept)?;
+                            if let Some((cert_p, key_p)) = &c2pa_creds {
+                                sign_exported_c2pa(&saved.image, &edits, cert_p, key_p)?;
+                            }
                             photo_log::event(
                                 Level::Info,
                                 Component::Export,

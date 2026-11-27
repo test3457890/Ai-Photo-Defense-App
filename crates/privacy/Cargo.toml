@@ -18,6 +18,12 @@ kamadak-exif = "0.6.2"
 regex = { version = "1.12", default-features = false, features = ["std", "perf", "unicode-case", "unicode-perl"] }
 # No image codecs or networking: decoding uses our own bounded luma buffer.
 rxing = { version = "0.9.4", default-features = false, features = ["decoders", "multi_barcode_readers", "full_barcode_format_support", "encoding_rs"] }
+c2pa = { version = "0.92", default-features = false, features = ["rust_native_crypto", "file_io"], optional = true }
+
+[features]
+default = []
+c2pa = ["dep:c2pa"]
 
 [dev-dependencies]
+rcgen = "0.14"
 rxing = { version = "0.9.4", default-features = false, features = ["encoders", "decoders", "multi_barcode_readers", "full_barcode_format_support", "encoding_rs"] }

@@ -37,6 +37,10 @@ pub struct Settings {
     pub format: String,
     pub quality: u8,
     pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub c2pa_cert_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub c2pa_key_path: Option<String>,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -45,6 +49,8 @@ impl Default for Settings {
             format: "png".into(),
             quality: 92,
             mode: "Professional".into(),
+            c2pa_cert_path: None,
+            c2pa_key_path: None,
         }
     }
 }
