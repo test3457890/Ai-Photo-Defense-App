@@ -21,6 +21,8 @@ pub mod protect;
 pub mod stt;
 pub mod subtitles;
 pub mod temporal;
+#[cfg(feature = "video")]
+pub mod video;
 
 pub use detect::{MediaKind, detect};
 

@@ -192,6 +192,23 @@ enum Command {
     },
     /// Adversarial voice protection. Refuses: no validated voice model is installed.
     AudioProtect { input: PathBuf },
+    /// Decode H.264 MP4/MOV, burn a time-ranged rectangle redaction, and re-encode cleanly.
+    #[cfg(feature = "video")]
+    VideoRedact {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Redaction rectangle x,y,w,h (pixels).
+        #[arg(long)]
+        rect: String,
+        #[arg(long)]
+        from: f64,
+        #[arg(long)]
+        to: f64,
+        /// Apply strong blur instead of opaque black fill.
+        #[arg(long)]
+        blur: bool,
+    },
     /// Transcribe speech locally with Whisper, detect spoken private data, and optionally bleep it.
     #[cfg(feature = "stt")]
     #[command(name = "audio-transcribe")]
@@ -740,6 +757,33 @@ fn main() -> Result<()> {
         Command::AudioProtect { input: _ } => anyhow::bail!(
             "No validated voice-protection model is installed. The audio protection engine refuses to run without one; no file was changed."
         ),
+        #[cfg(feature = "video")]
+        Command::VideoRedact {
+            input,
+            output,
+            rect,
+            from,
+            to,
+            blur,
+        } => {
+            let parts: Vec<u32> = rect
+                .split(',')
+                .map(|s| s.trim().parse::<u32>())
+                .collect::<std::result::Result<Vec<_>, _>>()
+                .context("--rect must be x,y,w,h")?;
+            anyhow::ensure!(parts.len() == 4, "--rect must have 4 integers: x,y,w,h");
+            let r = photo_media::video::RedactRect {
+                x: parts[0],
+                y: parts[1],
+                width: parts[2],
+                height: parts[3],
+                from_s: from,
+                to_s: to,
+                blur,
+            };
+            let report = photo_media::video::redact_mp4(&input, &output, &[r])?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         #[cfg(feature = "stt")]
         Command::AudioTranscribe {
             input,

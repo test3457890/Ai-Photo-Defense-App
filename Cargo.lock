@@ -1657,6 +1657,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "filmcraft-bitstream"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08f8be9fae696d78e233591b4d57871c39f15ac0ac7445168356cda705efa499"
+
+[[package]]
+name = "filmcraft-h264"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df2670e59d7dc442bce44fbf13d29def8c64ae08d30f50b96c65a62399e02994"
+dependencies = [
+ "filmcraft-bitstream",
+ "rayon",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "filmcraft-h264enc"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49486dc973601085de3fb78a207d9a749efd6393e1ec8ecb3d6ddd5f4e9b8d9b"
+dependencies = [
+ "filmcraft-bitstream",
+ "rayon",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3954,6 +3982,8 @@ dependencies = [
  "candle-nn",
  "candle-transformers",
  "ebur128",
+ "filmcraft-h264",
+ "filmcraft-h264enc",
  "hound",
  "image 0.25.10",
  "photo-log",
