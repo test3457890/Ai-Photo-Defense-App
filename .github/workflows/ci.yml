@@ -63,3 +63,63 @@ jobs:
             target/${{ matrix.target }}/debug/photo-desktop.exe
           if-no-files-found: error
           retention-days: 7
+  gui-smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install 1.100.0 --profile minimal
+      - name: Linux GUI and audio runtime dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config xvfb fonts-dejavu-core imagemagick x11-apps
+      - name: Build desktop application
+        run: cargo build --locked -p photo-desktop
+      - name: Launch desktop app and capture screenshot (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p /tmp/apd-smoke gui-smoke-artifacts
+          xvfb-run -a -s "-screen 0 1280x800x24" bash -c '
+            export APD_DATA_DIR=/tmp/apd-smoke
+            ./target/debug/photo-desktop &
+            APP_PID=$!
+            sleep 5
+            kill -0 "$APP_PID"
+            import -window root gui-smoke-artifacts/gui-smoke-linux.png || xwd -root -out gui-smoke-artifacts/gui-smoke-linux.xwd
+            kill "$APP_PID" || true
+            wait "$APP_PID" || true
+          '
+      - name: Launch desktop app and capture screenshot (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p /tmp/apd-smoke gui-smoke-artifacts
+          export APD_DATA_DIR=/tmp/apd-smoke
+          ./target/debug/photo-desktop &
+          APP_PID=$!
+          sleep 5
+          kill -0 "$APP_PID"
+          screencapture -x gui-smoke-artifacts/gui-smoke-macos.png || echo "screencapture unavailable on runner"
+          kill "$APP_PID" || true
+          wait "$APP_PID" || true
+      - name: Verify startup log has no errors
+        run: |
+          ls -la /tmp/apd-smoke/logs
+          cp -r /tmp/apd-smoke/logs gui-smoke-artifacts/logs
+          grep -rq "started" /tmp/apd-smoke/logs
+          if grep -rqE '"level":"Error"|\bERROR\b' /tmp/apd-smoke/logs; then
+            echo "Error found in application log:"
+            cat /tmp/apd-smoke/logs/*
+            exit 1
+          fi
+      - name: Upload GUI smoke screenshots and logs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gui-smoke-${{ matrix.os }}
+          path: gui-smoke-artifacts/
+          retention-days: 7
