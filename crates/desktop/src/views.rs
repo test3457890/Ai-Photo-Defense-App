@@ -2990,6 +2990,7 @@ fn startup_wizard(app: &App) -> El<'_> {
             small("Choose where to go next:"),
             row![
                 btn("Open Main Menu", Some(Message::ShowWizard(false))),
+                btn("Create Desktop Shortcut", Some(Message::CreateDesktopShortcut)),
                 btn("Start Interactive Tutorial", Some(Message::Mode(Mode::Tutorial))),
                 btn("Import Photos Now", Some(Message::OpenDialog)),
             ]
@@ -3077,6 +3078,7 @@ fn home(app: &App) -> El<'_> {
             btn("Import Photos", Some(Message::OpenDialog)),
             btn("Import Folder", Some(Message::OpenFolderDialog)),
             btn("Load Sample Photo", Some(Message::LoadCalibrationSample)),
+            btn("Create Desktop Shortcut", Some(Message::CreateDesktopShortcut)),
             btn("Scan Current Photo", app.selected.map(|_| Message::Scan)),
         ]
         .spacing(8),

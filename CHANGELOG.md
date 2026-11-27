@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 (2026-11-27)
+
+- **Desktop Shortcut Option:** Added **Create Desktop Shortcut** in the Startup Wizard and Main Menu (creates a native `.lnk` shortcut on Windows or `.desktop` entry on Linux).
+- **Automatic Update & Relaunch:** **Download & Install Update** now verifies SHA-256 against `SHA256SUMS.txt`, closes the running app cleanly, runs the installer (`msiexec /passive` on Windows), and automatically relaunches the updated app.
+
 ## 1.0.0 (2026-11-27)
 
 Official 1.0.0 release candidate: Startup Wizard, Main Menu, Interactive Tutorial Mode, Opt-In GitHub Release Updater (tag-gated `v*` releases only), Sanitized Error Log export, Validation Center, 23-transform Real-World Durability Suite, and hardened adversarial engine (`photo-engine`).

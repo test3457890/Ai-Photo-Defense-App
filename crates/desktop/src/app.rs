@@ -567,6 +567,7 @@ pub enum Message {
     OpenReleasesPage,
     DownloadAndInstallUpdate,
     InstallerDownloaded(Result<String, String>),
+    CreateDesktopShortcut,
     LoadCalibrationSample,
     VideoSetFromNow,
     VideoSetToNow,
@@ -3057,6 +3058,11 @@ impl App {
             Message::InstallerDownloaded(res) => {
                 self.busy = None;
                 match &res {
+                    Ok(msg) if msg.starts_with("__RELAUNCH__:") => {
+                        let clean = msg.trim_start_matches("__RELAUNCH__:").to_string();
+                        self.note(clean);
+                        return iced::exit();
+                    }
                     Ok(msg) => {
                         self.note(msg.clone());
                         self.download_status = Some(msg.clone());
@@ -3072,6 +3078,17 @@ impl App {
                     }
                 }
             }
+            Message::CreateDesktopShortcut => match create_desktop_shortcut() {
+                Ok(msg) => self.note(msg),
+                Err(e) => {
+                    photo_log::error(
+                        Component::App,
+                        Code::Other,
+                        &format!("Create shortcut failed: {e}"),
+                    );
+                    self.note(format!("Shortcut error: {e}"));
+                }
+            },
             Message::LoadCalibrationSample => {
                 let candidates = [
                     PathBuf::from("tests/fixtures/calibration.png"),
@@ -4362,11 +4379,25 @@ fn download_release_asset(
     if install_now {
         #[cfg(target_os = "windows")]
         if safe_name.ends_with(".msi") {
-            let _ = std::process::Command::new("msiexec")
-                .arg("/i")
-                .arg(&dest)
+            let exe = std::env::current_exe()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| {
+                    r"C:\Program Files\AI Photo Defense\bin\photo-desktop.exe".to_string()
+                });
+            let cmd_line = format!(
+                "timeout /t 1 /nobreak >nul & msiexec /i \"{}\" /passive & if exist \"{}\" (start \"\" \"{}\") else if exist \"C:\\Program Files\\AI Photo Defense\\bin\\photo-desktop.exe\" (start \"\" \"C:\\Program Files\\AI Photo Defense\\bin\\photo-desktop.exe\")",
+                dest.display(),
+                exe,
+                exe
+            );
+            std::process::Command::new("cmd")
+                .args(["/c", &cmd_line])
                 .spawn()
                 .map_err(|e| format!("Failed to launch installer: {e}"))?;
+            return Ok(format!(
+                "__RELAUNCH__:Installer launched ({verified_note}): {}",
+                dest.display()
+            ));
         } else {
             let _ = std::process::Command::new("cmd")
                 .args(["/c", "start", ""])
@@ -4390,6 +4421,60 @@ fn download_release_asset(
         bytes.len(),
         fp.sha256
     ))
+}
+
+fn create_desktop_shortcut() -> Result<String, String> {
+    let exe = std::env::current_exe().map_err(|e| format!("Locate executable: {e}"))?;
+    #[cfg(target_os = "windows")]
+    {
+        let home = std::env::var_os("USERPROFILE").ok_or("USERPROFILE not set")?;
+        let desktop = PathBuf::from(&home).join("Desktop");
+        if !desktop.is_dir() {
+            return Err("Desktop folder not found".into());
+        }
+        let lnk = desktop.join("AI Photo Defense.lnk");
+        let work_dir = exe
+            .parent()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let ps = format!(
+            "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{}'); $s.TargetPath = '{}'; $s.WorkingDirectory = '{}'; $s.Description = 'AI Photo Defense'; $s.Save()",
+            lnk.display().to_string().replace('\'', "''"),
+            exe.display().to_string().replace('\'', "''"),
+            work_dir.replace('\'', "''"),
+        );
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-Command", &ps])
+            .output()
+            .map_err(|e| format!("PowerShell shortcut failed: {e}"))?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+        }
+        Ok(format!(
+            "Created Desktop shortcut: {} (right-click it to Pin to Taskbar or Start)",
+            lnk.display()
+        ))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let home = std::env::var_os("HOME").ok_or("HOME not set")?;
+        let desktop = PathBuf::from(home).join("Desktop");
+        std::fs::create_dir_all(&desktop).map_err(|e| e.to_string())?;
+        let entry_path = desktop.join("ai-photo-defense.desktop");
+        let content = format!(
+            "[Desktop Entry]\nType=Application\nName=AI Photo Defense\nExec=\"{}\"\nTerminal=false\nCategories=Graphics;Photography;\n",
+            exe.display()
+        );
+        std::fs::write(&entry_path, content).map_err(|e| e.to_string())?;
+        Ok(format!("Created Desktop entry: {}", entry_path.display()))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Ok(format!(
+            "macOS app binary: {} (drag AI Photo Defense.app to Applications or Dock to pin)",
+            exe.display()
+        ))
+    }
 }
 
 #[cfg(feature = "video")]
