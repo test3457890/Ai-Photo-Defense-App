@@ -22,6 +22,7 @@ photo-models.workspace = true
 photo-edit.workspace = true
 photo-privacy.workspace = true
 photo-pipeline.workspace = true
+photo-media.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

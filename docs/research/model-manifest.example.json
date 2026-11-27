@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "clip-vit-base-patch32",
   "filename": "model.safetensors",
   "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -7,5 +7,7 @@
   "source_url": "https://example.invalid/review-required",
   "code_license": "REVIEW REQUIRED",
   "weights_license": "REVIEW REQUIRED",
-  "redistribution_approved": false
+  "local_use_approved": false,
+  "redistribution_approved": false,
+  "commercial_use_permitted": false
 }

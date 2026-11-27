@@ -4,7 +4,7 @@ default-members = ["crates/cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.2.0"
+version = "0.5.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/test3457890/Ai-Photo-Defense-App"
@@ -14,7 +14,7 @@ publish = false
 anyhow = "1.0"
 blake3 = "1.8"
 clap = { version = "4.5", features = ["derive"] }
-image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp", "tiff"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp", "tiff", "bmp", "gif"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
@@ -26,6 +26,10 @@ photo-lab = { path = "crates/lab" }
 photo-edit = { path = "crates/edit" }
 photo-privacy = { path = "crates/privacy" }
 photo-pipeline = { path = "crates/pipeline" }
+photo-log = { path = "crates/log" }
+photo-project = { path = "crates/project" }
+photo-catalog = { path = "crates/catalog" }
+photo-media = { path = "crates/media" }
 
 [profile.dev]
 debug = 0

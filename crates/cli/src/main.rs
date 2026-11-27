@@ -134,6 +134,70 @@ enum Command {
     },
     /// List built-in privacy profiles, or print one as JSON for editing and re-import.
     Profiles { name: Option<String> },
+    /// Read-only forensic inspection (hashes, EXIF, JPEG tables, C2PA presence). Output is sensitive.
+    Forensics { input: PathBuf },
+    /// Extract the embedded camera preview from a RAW file as a new JPEG (no RAW development).
+    RawPreview { input: PathBuf, output: PathBuf },
+    /// Embed an invisible ownership watermark (48-bit payload). The passphrase is read from the
+    /// environment variable named by --key-env so it does not appear in shell history.
+    /// Survives JPEG quality 70+; does NOT survive resizing or cropping and is not AI protection.
+    WatermarkEmbed {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Payload number to embed (0 to 2^48-1), for example an owner or licence ID.
+        #[arg(long)]
+        payload: u64,
+        #[arg(long, default_value = "APD_WATERMARK_KEY")]
+        key_env: String,
+        #[arg(long, value_enum, default_value_t = Format::Png)]
+        format: Format,
+        #[arg(long, default_value_t = 92)]
+        quality: u8,
+        #[arg(long, default_value_t = 4.0)]
+        strength: f32,
+    },
+    /// Look for a watermark made with the passphrase in --key-env.
+    WatermarkDetect {
+        input: PathBuf,
+        #[arg(long, default_value = "APD_WATERMARK_KEY")]
+        key_env: String,
+    },
+    /// Identify any media file by content and list its tracks, codecs and privacy metadata.
+    MediaInspect { input: PathBuf },
+    /// Remove privacy metadata from MP4/MOV/M4A/3GP without re-encoding; verifies every chunk.
+    StripVideo {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Loudness (EBU R128), true peak, clipping, silence and spectrum summary of an audio file.
+    AudioAnalyze { input: PathBuf },
+    /// Compare two recordings sample by sample (SNR, segmental SNR, length).
+    AudioCompare {
+        original: PathBuf,
+        processed: PathBuf,
+    },
+    /// Export audio as metadata-free WAV, optionally muting or bleeping time ranges (seconds).
+    AudioExport {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Range to mute, e.g. 12.5-14 (repeatable).
+        #[arg(long)]
+        mute: Vec<String>,
+        /// Range to bleep, e.g. 30-31.2 (repeatable).
+        #[arg(long)]
+        bleep: Vec<String>,
+    },
+    /// Adversarial voice protection. Refuses: no validated voice model is installed.
+    AudioProtect { input: PathBuf },
+    /// Scan SRT/WebVTT subtitles for private information; optionally write a redacted copy.
+    Subtitles {
+        input: PathBuf,
+        #[arg(long)]
+        redact_to: Option<PathBuf>,
+    },
 }
 #[derive(clap::Args, Clone)]
 struct ProfileArgs {
@@ -423,12 +487,7 @@ fn main() -> Result<()> {
             let photo = load(&input)?;
             let mut edits = photo_edit::EditStack::from_operations(edit.operations()?)?;
             if auto_redact {
-                let staged = photo_core::Photo {
-                    pixels: edits.render(&photo.pixels)?,
-                    fingerprint: photo.fingerprint.clone(),
-                    format: photo.format,
-                    bytes: photo.bytes.clone(),
-                };
+                let staged = photo.with_pixels(edits.render(&photo.pixels)?);
                 let found = photo_pipeline::scan_photo(&staged, &profile).findings;
                 if let Some(op) = photo_pipeline::conceal_findings(&found, profile.redaction, 4) {
                     edits.push(op)?;
@@ -540,6 +599,157 @@ fn main() -> Result<()> {
                 s.failed
             );
         }
+        Command::Forensics { input } => {
+            let p = load(&input)?;
+            eprintln!(
+                "Sensitive: this report contains file metadata values. Do not share it without review."
+            );
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&photo_privacy::forensics::inspect(&p.bytes))?
+            );
+        }
+        Command::RawPreview { input, output } => {
+            use std::io::Read;
+            let mut b = vec![];
+            std::fs::File::open(&input)?
+                .take(photo_core::raw::MAX_RAW_BYTES + 1)
+                .read_to_end(&mut b)?;
+            let ext = input.extension().and_then(|e| e.to_str());
+            let p = photo_core::raw::extract_preview(&b, ext)?;
+            save_new(&output, &p.jpeg)?;
+            println!(
+                "{:?} preview: {} bytes ({} candidates). Note: embedded camera JPEG, not RAW development; it may contain EXIF.",
+                p.kind,
+                p.jpeg.len(),
+                p.candidates
+            );
+        }
+        Command::WatermarkEmbed {
+            input,
+            output,
+            payload,
+            key_env,
+            format,
+            quality,
+            strength,
+        } => {
+            ensure!(payload < 1 << 48, "Payload must be below 2^48");
+            let key = watermark_key(&key_env)?;
+            let photo = load(&input)?;
+            let mut rgb = photo.pixels.to_rgb8();
+            photo_edit::watermark::embed(&mut rgb, key, payload, strength)?;
+            let img = image::DynamicImage::ImageRgb8(rgb);
+            let bytes = encode(&img, format.into(), quality)?;
+            let check =
+                photo_edit::watermark::detect(&image::load_from_memory(&bytes)?.to_rgb8(), key)?;
+            ensure!(
+                check.payload == Some(payload),
+                "Watermark did not survive encoding at these settings; raise quality or strength"
+            );
+            save_new(&output, &bytes)?;
+            println!(
+                "Embedded and verified after encoding (confidence {:.3}). Not AI protection; does not survive resizing or cropping.",
+                check.confidence
+            );
+        }
+        Command::WatermarkDetect { input, key_env } => {
+            let key = watermark_key(&key_env)?;
+            let photo = load(&input)?;
+            let d = photo_edit::watermark::detect(&photo.pixels.to_rgb8(), key)?;
+            println!("{}", serde_json::to_string_pretty(&d)?);
+            if d.payload.is_none() {
+                eprintln!(
+                    "No watermark for this passphrase (or it was removed, resized or cropped)."
+                );
+            }
+        }
+        Command::MediaInspect { input } => {
+            let b = read_media(&input)?;
+            let det = photo_media::detect(&b);
+            let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if photo_media::detect::extension_mismatch(&det, ext) {
+                eprintln!(
+                    "Warning: the .{ext} extension does not match the detected {} content",
+                    det.container
+                );
+            }
+            let info = photo_media::inspect(&b)?;
+            println!("{}", serde_json::to_string_pretty(&info)?);
+        }
+        Command::StripVideo { input, output } => {
+            let b = read_media(&input)?;
+            let (out, report) = photo_media::mp4::strip(&b)?;
+            save_new(&output, &out)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::AudioAnalyze { input } => {
+            let mut a = photo_media::audio::analyze(&input)?;
+            a.waveform.clear();
+            a.spectrogram.clear();
+            println!("{}", serde_json::to_string_pretty(&a)?);
+        }
+        Command::AudioCompare {
+            original,
+            processed,
+        } => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&photo_media::audio::compare(&original, &processed)?)?
+            );
+        }
+        Command::AudioExport {
+            input,
+            output,
+            mute,
+            bleep,
+        } => {
+            let mut segs = vec![];
+            for (list, kind) in [
+                (&mute, photo_media::audio::RedactKind::Mute),
+                (&bleep, photo_media::audio::RedactKind::Bleep),
+            ] {
+                for r in list {
+                    let (a, b) = r.split_once('-').context("Ranges must look like 12.5-14")?;
+                    segs.push(photo_media::audio::Segment {
+                        start_s: a.trim().parse()?,
+                        end_s: b.trim().parse()?,
+                        kind,
+                    });
+                }
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&photo_media::audio::export_wav(
+                    &input, &output, &segs
+                )?)?
+            );
+        }
+        Command::AudioProtect { input: _ } => anyhow::bail!(
+            "No validated voice-protection model is installed. The audio protection engine refuses to run without one; no file was changed."
+        ),
+        Command::Subtitles { input, redact_to } => {
+            let b = read_media(&input)?;
+            let text = String::from_utf8_lossy(&b);
+            let cues = photo_media::subtitles::parse(&text)?;
+            let found = photo_media::subtitles::scan(&cues, &photo_privacy::Country::ALL);
+            println!("{}", serde_json::to_string_pretty(&found)?);
+            if let Some(out) = redact_to {
+                let flagged: Vec<usize> = found.iter().map(|f| f.cue).collect();
+                let vtt = photo_media::detect(&b).container == "WebVTT";
+                save_new(
+                    &out,
+                    photo_media::subtitles::write(&cues, &flagged, vtt).as_bytes(),
+                )?;
+                eprintln!(
+                    "Wrote redacted subtitles ({} cue(s) replaced)",
+                    flagged
+                        .iter()
+                        .collect::<std::collections::HashSet<_>>()
+                        .len()
+                );
+            }
+        }
         Command::Profiles { name } => match name {
             None => {
                 for p in photo_privacy::Profile::all() {
@@ -556,6 +766,33 @@ fn main() -> Result<()> {
         ),
     }
     Ok(())
+}
+fn watermark_key(var: &str) -> Result<u64> {
+    let p = std::env::var(var)
+        .with_context(|| format!("Set the passphrase in the environment variable {var}"))?;
+    ensure!(
+        p.chars().count() >= 8,
+        "Use a watermark passphrase of at least 8 characters"
+    );
+    Ok(photo_edit::watermark::key_from_passphrase(&p))
+}
+/// Bounded read of a media file (regular files only).
+fn read_media(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let m = std::fs::symlink_metadata(path)?;
+    ensure!(
+        m.is_file() && !m.file_type().is_symlink(),
+        "Input must be a regular file"
+    );
+    ensure!(
+        m.len() <= 2 * 1024 * 1024 * 1024,
+        "File exceeds the 2 GiB inspection limit"
+    );
+    let mut b = vec![];
+    std::fs::File::open(path)?
+        .take(m.len() + 1)
+        .read_to_end(&mut b)?;
+    Ok(b)
 }
 fn export_one(input: &Path, dir: &Path, format: ExportFormat, q: u8) -> Result<PathBuf> {
     let p = load(input)?;

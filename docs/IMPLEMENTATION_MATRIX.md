@@ -160,3 +160,144 @@ Implementation, compilation and verification are different things. "Tested" name
 | Requirement | Status |
 |---|---|
 | Signed installers (MSI/EXE, DMG, AppImage/DEB/RPM) | Blocked: no signing credentials, runtime testing incomplete. CI artifacts are unsigned development builds. |
+
+## Part 3
+
+Increment started from `7b0e8b22b11b7191632974552298ec539e5ac51a` (Part 2 branch, PR #7 open, not merged). Specification: [PART3_SPECIFICATION.md](PART3_SPECIFICATION.md). Same status vocabulary as above; nothing is "Independently verified" yet.
+
+| Requirement (section) | Status | Evidence / gap |
+|---|---|---|
+| Review of Parts 1-2, launch and screenshot old UI (3) | Tested | HANDOFF.md, docs/design/PART3_DESIGN.md |
+| GUI redesign, three distinct modes (5-7) | Tested (Windows 10) | screenshots/part3-*.png; design doc |
+| Menus, toolbar, collapsible groups, dockable/resizable panes, status bar, shortcuts, fullscreen (6) | Tested (Windows 10) | pane_grid resize/drag/maximise; F11 |
+| Context menus | Incomplete | Right-click on filmstrip toggles flag only |
+| Accessibility (screen readers), multi-monitor | Blocked / not tested | Iced 0.13 has no AccessKit |
+| Light/dark themes, high-DPI (125%), window sizes (9) | Tested (Windows 10) | |
+| Framework evaluation (8) | Implemented | Iced kept; egui/Slint compared |
+| Crop, resize, rotate, straighten, flip, perspective (4-point), lens (1-parameter), canvas resize, custom ratios (10) | Tested | edit unit tests; GUI Geometry group |
+| Image alignment, automatic object/subject/background selection | Blocked | Needs segmentation model |
+| Rect, ellipse, polygon, lasso, brush, gradient, radial masks drawable in GUI (10) | Tested (Windows 10, rect) / Implemented (others) | Overlay rasterised; masks unit-tested |
+| Mask refinement, layer masks, colour-range and luminance masks (10, 12, 14) | Tested (engine) | GUI exposes selection/gradient/radial masks; colour range/luminance in engine and recipes only |
+| Undo/redo, history, before/after, split view (10) | Tested | |
+| All §11 adjustments, global or masked, float precision, linear-light WB/exposure | Tested | color.rs tests; GUI sliders |
+| Curves (master parametric in GUI; master + R/G/B in engine), HSL 8 bands, split toning/grading, colour balance, LUT import/export, presets (12) | Tested | .cube parser hostile-input tests |
+| Colour wheels, selective colour UI, profile conversion, HDR, scopes beyond histogram | Not started | |
+| Histogram, clipping warnings/overlay, pixel inspection (12) | Tested (Windows 10) | |
+| RAW: identification + embedded preview for DNG/CR2/CR3/NEF/ARW/RAF/ORF/RW2/PEF (13) | Tested (synthetic files only) | CAMERA_COMPATIBILITY.md |
+| RAW decoding/demosaic/camera and lens profiles | Blocked | LGPL decoders need owner licensing decision |
+| Layers: adjustment, redaction, shape, visibility, opacity, blend, ordering, delete, flatten on export (14) | Tested | Redaction layers forced above adjustments |
+| Text layers, layer groups, locking, duplication, merging | Not started | Fonts are an untrusted-input surface; deferred |
+| Intelligent editing (15) | Incomplete | Auto exposure/WB (deterministic) only; others blocked on models |
+| Privacy Scan: uncertain vs confirmed separated (16) | Tested (Windows 10) | Detection model improvements blocked |
+| High-assurance export pre-review + post-verify (17) | Tested | pre_export_review; verify; GUI blocks |
+| C2PA / authenticity verification | Not started | Detected only, reported unverified |
+| Media Manager: SQLite catalog, albums, tags, ratings, search, filters, duplicates, missing files, optional cache with secure clear (18) | Tested (engine), Implemented (GUI subset) | GUI: search, rating filter, tag, open from catalog |
+| Portable projects / archiving | Not started | |
+| Batch: existing Part 2 batch + colour/crop recipes via CLI (19) | Implemented | Batch watermarking/AI protection not available |
+| Structured logger, allowlisted fields, sanitisation, rotation, retention, caps, clear, report (21-22) | Tested | log tests use synthetic secrets |
+| Diagnostics Center (23) | Tested (Windows 10) | |
+| Autosave, atomic saves, backups, checkpoints, unclean-shutdown detection, restore banner, safe mode, temp cleanup (24) | Tested | project tests; forced kill observed in GUI |
+| Disk-exhaustion, GPU and model failure recovery tests | Not started | |
+| Performance Center with real sysinfo data (25) | Tested (Windows 10) | GPU shown as not used |
+| Optimisation: parallel colour stage, proxy rendering, bounded proxy cache (26) | Tested | BENCHMARKS.md |
+| GPU acceleration, SIMD intrinsics, 8 GB test | Not started | |
+| Forensic inspection (27) | Tested | JPEG quality estimate tests |
+| Security hardening: hostile RAW/LUT/project/catalog inputs, SQL parameterisation, log injection (28) | Tested | Fuzz harness still not started |
+| Competitive benchmarking (29) | Blocked | Competing apps not available; no claim made |
+| Cross-platform runtime (30) | Incomplete | Windows only |
+| Signed releases | Blocked | No signing credentials |
+
+
+## Part 4
+
+Specification: [PART4_SPECIFICATION.md](PART4_SPECIFICATION.md) (verbatim). Status words as above; "Tested" means automated tests plus a manual run of the real Windows 10 app unless noted. Formats in detail: [FORMAT_COMPATIBILITY.md](FORMAT_COMPATIBILITY.md).
+
+| Requirement (spec section) | Status | Evidence / blocker |
+|---|---|---|
+| Audit of Parts 1 to 3 before expanding (3, 37A) | Done | Fixed: release desktop opened a console window; long text-field values painted over neighbouring widgets (iced 0.13 tiny-skia); folder import ignored media; manifest schema 2 separates local use from redistribution |
+| Content-based format detection, extension mismatch warning (9) | Tested | `photo_media::detect`, 40+ signatures; unit tests; GUI and CLI warn on mismatch |
+| Format compatibility matrix (9, 38) | Done | FORMAT_COMPATIBILITY.md |
+| Images: BMP and GIF import (6) | Tested | animated GIF flagged, first frame only |
+| Images: AVIF, HEIC/HEIF, JPEG XL, JPEG 2000, APNG, animated WebP, EXR, PSD, XCF, SVG (6) | Detect only | decoders not added (licence/patent review, untrusted-input surface) |
+| Video container inspection: MP4/MOV/3GP/M4A, MKV/WebM (7, 9) | Tested | tracks, codecs, size, fps, duration, language, metadata |
+| Video decode / preview / encode, codecs (7) | Blocked | no reviewed decoder; FilmCraft identified as candidate (research register) |
+| Audio decode, analysis, waveform, spectrogram (8, 15) | Tested | Symphonia; WAV, FLAC, MP3, AAC/M4A, ALAC, Ogg Vorbis |
+| AIFF, Opus, WMA, AC-3, AMR decode (8) | Blocked | not in Symphonia 0.5; detect only |
+| Large-file streaming (31) | Implemented | audio streamed (10 min 48 kHz stereo analysed in 3.4 s); MP4 rewrite holds the file in memory (1 GiB GUI limit, 2 GiB CLI) |
+| FilmCraft evaluation (10) | Done (desk review) | MIT OR Apache-2.0, own H.264 codec; not integrated (security/patent review pending) |
+| Repository and research investigation (11 to 14) | Partial | research/MULTIMEDIA_RESEARCH_REGISTER.md: 4 projects verified, the rest listed as not verified |
+| Audio protection engine (15) | Implemented, not usable | masked PGD engine with tests; refuses without a validated objective; no model installed |
+| Music and artist protection (16) | Blocked | same engine and profile; no model |
+| Video protection engine, temporal consistency (17) | Blocked | flicker metrics implemented (`temporal`); no frames, no model |
+| Combined audiovisual protection, A/V sync (18) | Blocked | depends on video decode/encode |
+| Protection profiles (19) | Implemented (audio engine) | Original Quality, Balanced/Voice, Maximum, Music |
+| Social media profiles (20) | Not started for media | photo profiles from Part 2 unchanged |
+| Quality preservation controls (21) | Partial | SNR floor, masking offset, no clipping in engine; loudness/peak analysis |
+| Comparison workspace: waveform, spectrogram, loudness-matched A/B (22) | Tested | desktop A/B at -23 LUFS; SNR, segmental SNR, length checks |
+| Multimedia Privacy Scan: metadata, subtitles (23) | Tested | MP4/MKV metadata; SRT/WebVTT text rules with cue times |
+| Spoken information redaction (23) | Partial | manual mute/bleep ranges, verified; automatic detection blocked (no local speech-to-text model) |
+| Moving-object redaction (23) | Blocked | needs decode, tracking and detection models |
+| Metadata removal (24) | Tested | audio via clean WAV export; MP4 family lossless; MKV not implemented |
+| Watermarking and provenance (25) | Not started | no C2PA signing credentials; no watermark |
+| Defense Lab for media, compression resilience (26, 27) | Not started | needs protection model and encoders |
+| Batch multimedia (28) | Partial | desktop imports folders of media; CLI commands per file; no batch media export yet |
+| GUI in all three modes (29) | Tested (Windows 10) | Essential list + side panel, Professional MEDIA library + viewer, Technical Format Inspection; screenshots `part4-*.png` |
+| 21-step pipeline (30) | Partial | steps 1-8, 11, 14, 17, 18, 21 for supported formats; protection, encode, watermark, credentials and A/V sync steps blocked |
+| Logging and diagnostics (32) | Tested | media events logged with codes; no file names or values |
+| Multimedia cybersecurity (33) | Tested | bounded parsers, node/depth caps, mutation tests, decoder panic containment (SECURITY_REVIEW.md) |
+| Cross-platform testing (34) | Incomplete | Windows 10 runtime; Linux/macOS compile in CI only |
+| Competitive benchmarking (35) | Blocked | no competing tools installed; no comparison claimed |
+| Releases (39) | Not done | PR opened for review; owner asked not to merge before review |
+
+## Part 5
+
+Specification: [PART5_SPECIFICATION.md](PART5_SPECIFICATION.md) (received cut off in section 8). Classification uses the Part 5 vocabulary. "Independently tested" means automated tests **and** a manual check in the real Windows 10 app or an independent CLI check of the output.
+
+### Master checklist, Parts 1 to 5 (summary by capability)
+
+| Capability | Classification | Evidence |
+|---|---|---|
+| Bounded image import (JPEG, PNG, WebP, TIFF, BMP, GIF), RAW embedded preview | Implemented and independently tested | core tests, mutation fuzz, GUI imports |
+| Metadata removal on export with re-open verification | Implemented and independently tested | pipeline tests, Part 2/3 GUI exports |
+| Non-destructive editing, colour, layers, masks, geometry | Implemented and independently tested | edit tests, Part 3 screenshots |
+| Opaque redaction | Implemented and independently tested | render-order test, export verification |
+| Blur / pixelation / mosaic | Implemented and independently tested | new recoverability test; weak settings now warned live and at export |
+| Privacy Scan: metadata, QR/barcodes, text rules | Implemented and independently tested | privacy tests, GUI scans |
+| Automatic face / person / object / document detection, OCR | Blocked by licensing | no licence-reviewed local model; every scan lists them as not examined |
+| Photo adversarial protection (CLIP PGD experiment) | Experimental | CLI only, computation verified, efficacy not measured; never shown as protection in the GUI |
+| Batch processing, review queue, duplicates | Implemented and independently tested | batch tests, CLI runs |
+| Media Manager catalog, projects, autosave, crash recovery, logging | Implemented and independently tested | catalog/project/log tests; forced-kill restart observed |
+| Diagnostics, Performance, Forensics, Format Inspection pages | Implemented and independently tested | Windows GUI screenshots |
+| Audio decode/analysis/redaction/export, A/B playback | Implemented and independently tested | media tests, GUI run, CLI check of outputs |
+| AIFF, CAF, MP1/MP2, ADPCM decode | Implemented but insufficiently tested | AIFF tested; CAF/MP2/ADPCM not tested with real files |
+| Opus, WMA, AC-3, AMR decode | Blocked by technical limitations | no reviewed pure-Rust decoder |
+| MP4-family metadata removal | Implemented and independently tested | 1,500 mutations, GUI + CLI verification (synthetic files only) |
+| Matroska metadata removal | Not implemented | inspection only |
+| Subtitle Privacy Scan and redaction | Implemented and independently tested | tests, GUI export, CLI check |
+| Video frame decode, preview, redaction, re-encode | Blocked by technical limitations | candidate decoder (FilmCraft) needs security and patent review |
+| Video adversarial protection | Not supported by sufficient research | no licence-compatible validated method with weights; FaceShield is research-only |
+| Voice-cloning protection | Not implemented (engine experimental) | engine refuses without objective; licence-compatible encoders now identified (SpeechBrain ECAPA, Resemblyzer: Apache-2.0) |
+| Automatic spoken-content detection | Not implemented | Whisper (MIT) identified; candle port and validation pending |
+| Invisible ownership watermark | Implemented and independently tested (CLI) | tests incl. JPEG 70-90 survival; real photo check; not in GUI yet |
+| C2PA content credentials | Blocked by technical limitations | needs signing certificate |
+| Linux / macOS | Implemented but insufficiently tested | CI builds and runs all tests on Linux, macOS Intel, macOS Apple Silicon; no GUI runtime check |
+| Signed releases, installers, updater | Not implemented | no signing credentials; no updater (the app makes no network connections) |
+| Competitive benchmarks | Blocked by technical limitations | comparison tools not installed |
+
+### Section 4 sweep (incomplete functionality)
+
+| Search | Result |
+|---|---|
+| TODO / FIXME / `todo!` / `unimplemented!` in workspace code | none |
+| Placeholder / mock / simulated data outside tests | none: demo fixtures live in `examples/` and are labelled as fixtures |
+| Messages without a handler, buttons without an effect | none: every `Message` variant is handled; disabled buttons are disabled, not no-ops |
+| Unused dependencies | removed `serde_json` from `photo-models` |
+| Incorrect success messages | none found: exports report "verified" only after re-open checks; audio protection refuses with an error |
+| Fabricated protection scores | none: no protection percentage is computed or displayed |
+| Unsupported format claims | corrected: README and docs list exactly what decodes |
+
+### Bugs fixed in this part
+
+1. Text fields drew their text outside the box (owner's screenshots). Root cause: iced 0.13 only clips text-input text while a selection is active, and containers/scrollables without overflow create no clip layer. Fix: a small `Clip` widget that always draws its child in a clipped layer; every text field now uses it with the frame drawn outside the clip. Verified while typing and after leaving the field.
+2. Weak blur and pixelation were accepted without warning. Now flagged in the inspector, the pre-export review and the export report.
+3. AIFF was advertised as "detect only" although the decoder supports it once its feature is enabled; enabled with a test.

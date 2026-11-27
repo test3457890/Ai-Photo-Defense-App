@@ -9,6 +9,8 @@ use std::{
     path::Path,
 };
 
+pub mod raw;
+
 pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_PIXELS: u64 = 24_000_000;
 pub const MAX_SIDE: u32 = 16_384;
@@ -29,25 +31,56 @@ pub struct Photo {
     pub pixels: DynamicImage,
     pub fingerprint: Fingerprint,
     pub format: ImageFormat,
-    /// The exact bytes that were decoded, for metadata inspection without a second read.
+    /// The exact bytes that were read, for metadata inspection without a second read.
     pub bytes: Vec<u8>,
+    /// Set when the pixels come from a RAW file's embedded camera preview.
+    pub raw: Option<raw::RawKind>,
+}
+impl Photo {
+    /// Same source (hash, bytes, RAW status) with different pixels, e.g. after edits.
+    pub fn with_pixels(&self, pixels: DynamicImage) -> Photo {
+        Photo {
+            pixels,
+            fingerprint: self.fingerprint.clone(),
+            format: self.format,
+            bytes: self.bytes.clone(),
+            raw: self.raw,
+        }
+    }
 }
 /// Uses one bounded byte snapshot, avoiding a dimensions/decode path replacement race.
 pub fn load(path: &Path) -> Result<Photo> {
     let file = File::open(path).context("Open image")?;
     ensure!(file.metadata()?.is_file(), "Input must be a regular file");
     ensure!(
-        file.metadata()?.len() <= MAX_FILE_BYTES,
-        "Input exceeds 64 MiB"
+        file.metadata()?.len() <= raw::MAX_RAW_BYTES,
+        "Input exceeds 256 MiB"
     );
     let mut bytes = Vec::new();
-    file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
-    let (pixels, format) = decode_bounded(&bytes)?;
+    file.take(MAX_FILE_BYTES.max(raw::MAX_RAW_BYTES) + 1)
+        .read_to_end(&mut bytes)?;
+    let ext = path.extension().and_then(|e| e.to_str());
+    let (pixels, format, raw) = match raw::identify(&bytes, ext) {
+        Some(_) => {
+            ensure!(
+                bytes.len() as u64 <= raw::MAX_RAW_BYTES,
+                "RAW file exceeds 256 MiB"
+            );
+            let preview = raw::extract_preview(&bytes, ext)?;
+            let (pixels, format) = decode_bounded(&preview.jpeg)?;
+            (pixels, format, Some(preview.kind))
+        }
+        None => {
+            let (pixels, format) = decode_bounded(&bytes)?;
+            (pixels, format, None)
+        }
+    };
     Ok(Photo {
         pixels,
         fingerprint: fingerprint(&bytes),
         format,
         bytes,
+        raw,
     })
 }
 
@@ -59,9 +92,14 @@ pub fn decode_bounded(bytes: &[u8]) -> Result<(DynamicImage, ImageFormat)> {
     ensure!(
         matches!(
             format,
-            ImageFormat::Jpeg | ImageFormat::Png | ImageFormat::WebP | ImageFormat::Tiff
+            ImageFormat::Jpeg
+                | ImageFormat::Png
+                | ImageFormat::WebP
+                | ImageFormat::Tiff
+                | ImageFormat::Bmp
+                | ImageFormat::Gif
         ),
-        "Only JPEG, PNG, WebP and TIFF supported"
+        "Only JPEG, PNG, WebP, TIFF, BMP and GIF are supported"
     );
     let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
     let mut limits = image::Limits::default();

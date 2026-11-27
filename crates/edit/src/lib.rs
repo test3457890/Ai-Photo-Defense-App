@@ -8,7 +8,13 @@ use anyhow::{Result, bail, ensure};
 use image::{DynamicImage, Rgba, RgbaImage, imageops::FilterType};
 use serde::{Deserialize, Serialize};
 
+pub mod color;
+pub mod layers;
 pub mod mask;
+pub mod proxy;
+pub mod watermark;
+pub use color::Adjustments;
+pub use layers::{BlendMode, LayerMask};
 pub use mask::{Mask, Selection};
 
 /// Upper bound on stack length so a crafted recipe cannot cause unbounded work.
@@ -126,6 +132,15 @@ impl Concealment {
     pub const WHITE: Self = Self::Solid {
         rgb: [255, 255, 255],
     };
+    /// Concealment too weak for text: small blur radii and small blocks leave characters
+    /// readable or reconstructable (see `weak_concealment_leaves_text_structure`).
+    pub fn is_weak(self) -> bool {
+        match self {
+            Self::GaussianBlur { sigma } => sigma < 8.0,
+            Self::Pixelate { block } | Self::Mosaic { block } => block < 12,
+            Self::Solid { .. } => false,
+        }
+    }
     pub fn is_secure_redaction(self) -> bool {
         matches!(self, Self::Solid { .. })
     }
@@ -184,6 +199,50 @@ pub enum Operation {
         #[serde(default)]
         invert: bool,
     },
+    /// Adjustment layer: global when `mask` is None.
+    Adjust {
+        #[serde(default)]
+        name: String,
+        adjustments: Box<Adjustments>,
+        #[serde(default)]
+        mask: Option<LayerMask>,
+        #[serde(default)]
+        invert: bool,
+        #[serde(default = "one")]
+        opacity: f32,
+        #[serde(default)]
+        blend: BlendMode,
+        #[serde(default = "yes")]
+        visible: bool,
+    },
+    /// Shape layer: colour fill of a selection. Opaque fills are not treated as redaction
+    /// unless created as a Conceal operation.
+    Fill {
+        selection: Selection,
+        rgba: [u8; 4],
+    },
+    /// Maps the quadrilateral TL, TR, BR, BL onto an upright rectangle.
+    Perspective {
+        corners: [(f32, f32); 4],
+        width: u32,
+        height: u32,
+    },
+    /// One-parameter radial distortion correction (not a lens profile).
+    LensDistortion {
+        k1: f32,
+    },
+    /// Centred canvas resize with an opaque fill colour.
+    Canvas {
+        width: u32,
+        height: u32,
+        fill: [u8; 3],
+    },
+}
+fn one() -> f32 {
+    1.
+}
+fn yes() -> bool {
+    true
 }
 impl Operation {
     pub fn label(&self) -> String {
@@ -215,7 +274,64 @@ impl Operation {
                     ""
                 }
             ),
+            Self::Adjust {
+                name,
+                mask,
+                visible,
+                opacity,
+                blend,
+                ..
+            } => format!(
+                "{}{}{}{}{}",
+                if name.is_empty() {
+                    "Adjustment layer"
+                } else {
+                    name
+                },
+                mask.as_ref()
+                    .map(|m| format!(" ({})", m.label()))
+                    .unwrap_or_default(),
+                if *opacity < 1. {
+                    format!(" {:.0}%", opacity * 100.)
+                } else {
+                    String::new()
+                },
+                if *blend != BlendMode::Normal {
+                    format!(" {blend}")
+                } else {
+                    String::new()
+                },
+                if *visible { "" } else { " [hidden]" }
+            ),
+            Self::Fill { selection, rgba } => format!(
+                "Shape fill #{:02x}{:02x}{:02x} {}",
+                rgba[0],
+                rgba[1],
+                rgba[2],
+                selection.label()
+            ),
+            Self::Perspective { width, height, .. } => {
+                format!("Perspective correction to {width}x{height}")
+            }
+            Self::LensDistortion { k1 } => format!("Lens distortion {k1:+.3}"),
+            Self::Canvas { width, height, .. } => format!("Canvas {width}x{height}"),
         }
+    }
+    /// Geometry operations change pixel coordinates; redaction regions cannot be carried across them.
+    pub fn is_geometry(&self) -> bool {
+        !matches!(
+            self,
+            Self::Conceal { .. } | Self::Adjust { .. } | Self::Fill { .. }
+        )
+    }
+    pub fn is_secure_redaction(&self) -> bool {
+        matches!(
+            self,
+            Self::Conceal {
+                method: Concealment::Solid { .. },
+                ..
+            }
+        )
     }
     fn apply(&self, img: RgbaImage) -> Result<RgbaImage> {
         let (w, h) = img.dimensions();
@@ -269,6 +385,37 @@ impl Operation {
                 conceal(&mut img, &m, *method);
                 img
             }
+            Self::Adjust {
+                adjustments,
+                mask,
+                invert,
+                opacity,
+                blend,
+                visible,
+                ..
+            } => {
+                if !*visible || adjustments.is_identity() {
+                    img
+                } else {
+                    layers::apply_layer(img, adjustments, mask.as_ref(), *invert, *opacity, *blend)?
+                }
+            }
+            Self::Fill { selection, rgba } => {
+                let mut img = img;
+                layers::fill(&mut img, selection, *rgba)?;
+                img
+            }
+            Self::Perspective {
+                corners,
+                width,
+                height,
+            } => layers::perspective(&img, *corners, *width, *height)?,
+            Self::LensDistortion { k1 } => layers::lens_correct(&img, *k1)?,
+            Self::Canvas {
+                width,
+                height,
+                fill,
+            } => layers::canvas(&img, *width, *height, *fill)?,
         })
     }
 }
@@ -428,11 +575,29 @@ pub fn flatten(img: RgbaImage) -> DynamicImage {
     }
 }
 
+fn validate_op(op: &Operation) -> Result<()> {
+    match op {
+        Operation::Conceal { method, .. } => method.validate(),
+        Operation::Adjust {
+            adjustments,
+            opacity,
+            ..
+        } => {
+            ensure!(
+                opacity.is_finite() && (0.0..=1.0).contains(opacity),
+                "Opacity must be 0..1"
+            );
+            adjustments.validate()
+        }
+        _ => Ok(()),
+    }
+}
+
 /// A secure-redaction mask and its fill color in final output coordinates.
 pub type Redaction = (Mask, [u8; 3]);
 
 /// Ordered non-destructive edits with undo/redo. The original is never modified.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct EditStack {
     operations: Vec<Operation>,
     #[serde(default)]
@@ -462,9 +627,7 @@ impl EditStack {
             self.operations.len() < MAX_OPERATIONS,
             "Edit history is full"
         );
-        if let Operation::Conceal { method, .. } = &op {
-            method.validate()?;
-        }
+        validate_op(&op)?;
         self.operations.push(op);
         self.cursor = Some(self.operations.len());
         Ok(())
@@ -505,15 +668,84 @@ impl EditStack {
     pub fn is_empty(&self) -> bool {
         self.active_len() == 0
     }
+    pub fn has_weak_concealment(&self) -> bool {
+        self.active()
+            .iter()
+            .any(|o| matches!(o, Operation::Conceal { method, .. } if method.is_weak()))
+    }
     pub fn has_visual_only_concealment(&self) -> bool {
         self.active().iter().any(
             |o| matches!(o, Operation::Conceal { method, .. } if !method.is_secure_redaction()),
         )
     }
+    /// Render order: within each run of operations between geometry edits, adjustment and
+    /// shape layers render first and secure redactions last, so a redaction layer always sits
+    /// on top and no later adjustment can alter its fill.
+    pub fn ordered(&self) -> Vec<&Operation> {
+        let mut out = Vec::with_capacity(self.active().len());
+        let mut pending = vec![];
+        for op in self.active() {
+            if op.is_geometry() {
+                out.append(&mut pending);
+                out.push(op);
+            } else if op.is_secure_redaction() {
+                pending.push(op);
+            } else {
+                out.push(op);
+            }
+        }
+        out.append(&mut pending);
+        out
+    }
+    /// Layer editing: these modify the active stack and discard any redo branch.
+    pub fn remove(&mut self, index: usize) -> bool {
+        let n = self.active_len();
+        if index >= n {
+            return false;
+        }
+        self.operations.truncate(n);
+        self.operations.remove(index);
+        self.cursor = Some(self.operations.len());
+        true
+    }
+    pub fn move_layer(&mut self, index: usize, up: bool) -> bool {
+        let n = self.active_len();
+        let j = if up {
+            index.checked_sub(1)
+        } else {
+            Some(index + 1)
+        };
+        match j {
+            Some(j) if index < n && j < n => {
+                self.operations.truncate(n);
+                self.operations.swap(index, j);
+                self.cursor = Some(n);
+                true
+            }
+            _ => false,
+        }
+    }
+    pub fn toggle_visible(&mut self, index: usize) -> bool {
+        let n = self.active_len();
+        if let Some(Operation::Adjust { visible, .. }) = self.operations[..n].get_mut(index) {
+            *visible = !*visible;
+            self.operations.truncate(n);
+            return true;
+        }
+        false
+    }
+    pub fn replace(&mut self, index: usize, op: Operation) -> Result<()> {
+        let n = self.active_len();
+        ensure!(index < n, "No such layer");
+        validate_op(&op)?;
+        self.operations.truncate(n);
+        self.operations[index] = op;
+        Ok(())
+    }
     /// Renders active operations from the original and flattens the result.
     pub fn render(&self, original: &DynamicImage) -> Result<DynamicImage> {
         let mut img = original.to_rgba8();
-        for op in self.active() {
+        for op in self.ordered() {
             img = op.apply(img)?;
             if img.width() == 0 || img.height() == 0 {
                 bail!("Edit produced an empty image");
@@ -526,7 +758,7 @@ impl EditStack {
     pub fn final_redactions(&self, original: &DynamicImage) -> Result<Option<Vec<Redaction>>> {
         let mut out = vec![];
         let mut img = original.to_rgba8();
-        for op in self.active() {
+        for op in self.ordered() {
             let (w, h) = img.dimensions();
             match op {
                 Operation::Conceal {
@@ -540,7 +772,7 @@ impl EditStack {
                     }
                     out.push((m, *rgb));
                 }
-                Operation::Conceal { .. } => {}
+                Operation::Conceal { .. } | Operation::Adjust { .. } | Operation::Fill { .. } => {}
                 _ if !out.is_empty() => return Ok(None),
                 _ => {}
             }
@@ -553,6 +785,49 @@ impl EditStack {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Residual contrast of a text-like pattern (3 px strokes, 6 px period) after concealment,
+    /// relative to the original. Weak settings keep enough structure to read strokes.
+    fn residual_contrast(method: Concealment) -> f64 {
+        let img = DynamicImage::ImageLuma8(image::GrayImage::from_fn(96, 48, |x, _| {
+            image::Luma([if x % 6 < 3 { 0 } else { 255 }])
+        }));
+        let mut s = EditStack::new();
+        s.push(Operation::Conceal {
+            selection: Selection::Rect(Rect::new(0, 0, 96, 48)),
+            method,
+            invert: false,
+        })
+        .unwrap();
+        let out = s.render(&img).unwrap().to_luma8();
+        let row: Vec<f64> = (24..72).map(|x| out.get_pixel(x, 24)[0] as f64).collect();
+        let mean = row.iter().sum::<f64>() / row.len() as f64;
+        let sd = (row.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / row.len() as f64).sqrt();
+        sd / 127.5
+    }
+    #[test]
+    fn weak_concealment_leaves_text_structure() {
+        let weak_blur = residual_contrast(Concealment::GaussianBlur { sigma: 1.0 });
+        let strong_blur = residual_contrast(Concealment::GaussianBlur { sigma: 12.0 });
+        let weak_mosaic = residual_contrast(Concealment::Mosaic { block: 4 });
+        let strong_mosaic = residual_contrast(Concealment::Mosaic { block: 24 });
+        assert!(weak_blur > 0.3, "weak blur keeps strokes: {weak_blur}");
+        assert!(
+            strong_blur < 0.05,
+            "strong blur removes strokes: {strong_blur}"
+        );
+        assert!(
+            weak_mosaic > 0.2,
+            "small blocks keep strokes: {weak_mosaic}"
+        );
+        assert!(
+            strong_mosaic < 0.05,
+            "large blocks remove strokes: {strong_mosaic}"
+        );
+        assert!(Concealment::GaussianBlur { sigma: 1.0 }.is_weak());
+        assert!(!Concealment::GaussianBlur { sigma: 12.0 }.is_weak());
+        assert!(Concealment::Mosaic { block: 4 }.is_weak());
+        assert!(!Concealment::BLACK.is_weak());
+    }
     fn gradient(w: u32, h: u32) -> DynamicImage {
         DynamicImage::ImageRgb8(image::RgbImage::from_fn(w, h, |x, y| {
             image::Rgb([
@@ -561,6 +836,58 @@ mod tests {
                 ((x + y) % 256) as u8,
             ])
         }))
+    }
+    #[test]
+    fn redaction_layers_render_above_later_adjustments() {
+        let img = gradient(32, 32);
+        let mut s = EditStack::new();
+        s.push(Operation::Conceal {
+            selection: Selection::Rect(Rect::new(4, 4, 8, 8)),
+            method: Concealment::BLACK,
+            invert: false,
+        })
+        .unwrap();
+        s.push(Operation::Adjust {
+            name: "lift".into(),
+            adjustments: Box::new(Adjustments {
+                exposure: 2.,
+                brightness: 0.8,
+                ..Default::default()
+            }),
+            mask: None,
+            invert: false,
+            opacity: 1.,
+            blend: BlendMode::Normal,
+            visible: true,
+        })
+        .unwrap();
+        let out = s.render(&img).unwrap().to_rgb8();
+        assert_eq!(
+            out.get_pixel(6, 6),
+            &image::Rgb([0, 0, 0]),
+            "redaction stays opaque black"
+        );
+        assert_ne!(out.get_pixel(20, 20), img.to_rgb8().get_pixel(20, 20));
+        assert_eq!(s.final_redactions(&img).unwrap().unwrap().len(), 1);
+        assert!(s.toggle_visible(1));
+        assert_eq!(
+            s.render(&img).unwrap().to_rgb8().get_pixel(20, 20),
+            img.to_rgb8().get_pixel(20, 20)
+        );
+        assert!(s.move_layer(1, true) && s.remove(0));
+        assert_eq!(s.active().len(), 1);
+        assert!(
+            s.push(Operation::Adjust {
+                name: String::new(),
+                adjustments: Box::default(),
+                mask: None,
+                invert: false,
+                opacity: 3.,
+                blend: BlendMode::Normal,
+                visible: true
+            })
+            .is_err()
+        );
     }
     #[test]
     fn aspect_crops() {

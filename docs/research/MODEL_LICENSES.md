@@ -15,7 +15,7 @@ No model weights are bundled, downloaded or loaded by default. Every row below i
 ## Gate before any model is enabled
 
 1. Record official source URL, exact file SHA-256 and size in a manifest reviewed independently of the distributor.
-2. Record code licence and weights licence separately, plus redistribution and commercial-use terms. The current manifest field `redistribution_approved` conflates local use and redistribution; split it before adding a downloader.
+2. Record code licence and weights licence separately, plus redistribution and commercial-use terms. Manifest schema 2 (Part 4) records `local_use_approved`, `redistribution_approved` and `commercial_use_permitted` separately; schema 1 manifests are refused.
 3. Accept only SafeTensors, ONNX or RTen. Never pickle, TorchScript or anything that executes code on load. Reject bundled scripts.
 4. Run the detector against a licensed or synthetic labelled set and publish precision/recall with the exact dataset manifest. Until then the detector is reported to users as uncertain.
 5. Keep a CPU path. GPU execution providers are optional.

@@ -45,3 +45,26 @@ CLI export image and sidecar publication are separate; an image can be saved whe
 - No `unsafe` code in workspace crates.
 - `cargo audit`: no vulnerabilities. Informational: RUSTSEC-2026-0543 chrono unmaintained (new, via rxing; no fixed release), lru unsound advisories via the Iced text stack (pre-existing), several unmaintained transitive crates (pre-existing). `cargo deny check` passes with the new deny.toml.
 - Open items: fuzzing harness, decoder sandboxing/process isolation, Windows junction test, split model local-use vs redistribution approval.
+
+
+## Part 3 review (2026-11-26)
+
+- New untrusted inputs: RAW containers (bounded IFD walk with loop detection, offset/length checks, candidate cap, previews decoded under the standard limits), .cube LUTs (16 MiB cap, size 2..65, finite values, exact entry count), project files (64 MiB cap, schema and field validation, symlink refusal), catalog queries (parameterised SQL with escaped LIKE patterns; column names allow-listed).
+- Logging: closed schema, sanitiser for paths/numbers/tokens/URLs/e-mails/credentials, control and bidi characters stripped, local only, rotation and caps, no memory dumps. Tests use synthetic secrets.
+- Crash recovery never replaces valid data with invalid data: backups and checkpoints are only taken from files that parse and validate.
+- Thumbnail cache is off by default; clearing overwrites with zeros before deletion (SSD and snapshot limitations documented).
+- Vulnerability found and fixed: rusqlite 0.38's bundled SQLite (RUSTSEC-2026-0459, medium) replaced by rusqlite 0.43 before any release. `cargo audit` and `cargo deny check` pass.
+- Still open: fuzzing, decoder process isolation, signed updates (no updater exists), font parsing (no text layers yet).
+
+
+## Part 4 review (2026-11-26)
+
+- New untrusted inputs: audio files (Symphonia demuxers/decoders), MP4/MOV/3GP/M4A and Matroska containers (own parsers), SRT/WebVTT text, GIF/BMP images.
+- **Finding (fixed before release): a crafted WAV made Symphonia 0.5 panic** ("TimeBase cannot have 0 numerator") instead of returning an error. Every call into the decoder now runs inside `catch_unwind` and is reported as a decode error; the panic is a test case. Decoder parameters are bounded (sample rate 1 Hz to 768 kHz, at most 32 channels, at most 12 hours).
+- Container parsers: bounds-checked reads, 200,000-node and depth-16 caps, size and offset validation, refusal of fragmented MP4 for rewriting, 32-bit container limit for rewrites. 1,500 random mutations of MP4 files and xorshift mutations of PNG/JPEG/GIF/WebP/TIFF run in the test suite without panics.
+- MP4 metadata removal re-parses its own output and compares track parameters and chunk bytes; any difference aborts the export.
+- Subtitle input capped at 16 MiB and 200,000 cues; findings carry categories and cue times only, never matched text.
+- Exports never overwrite: new names are suffixed; media files are read with symlink refusal and size limits (1 GiB desktop inspection, 2 GiB CLI).
+- Local playback uses the operating system audio device only; nothing is uploaded and no network code was added.
+- `cargo audit`: no vulnerabilities; the 16 informational warnings are unchanged from Part 3 (none comes from the new audio crates). `cargo deny check`: advisories, bans, licences and sources ok (MPL-2.0 already allowed).
+- Still open: fuzzing with coverage guidance, decoder process isolation, a review of any future video codec before it touches untrusted bitstreams.

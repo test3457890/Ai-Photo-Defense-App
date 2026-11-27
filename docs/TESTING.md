@@ -1,5 +1,12 @@
 # Testing and evaluation
 
+## Part 3 (Windows 10, 2026-11-26)
+
+73 tests pass (`cargo test --locked --workspace`), 74 with `--all-features`. New coverage: colour pipeline (identity is lossless, linear-light exposure maths, control directions, monotone curves, HSL round-trip, band weights, LUT bake/parse round-trip and hostile .cube files, histogram/clipping, auto tone, presets), layers (opacity, gradient/radial/colour/luminance masks, blend modes, identity homography, degenerate corners, lens, canvas), redaction-above-adjustment ordering, proxy rendering equivalence, RAW previews (DNG, NEF, RAF, CR3 synthetic files, IFD loops, truncation), forensic JPEG quality estimates and C2PA detection, catalog filters/duplicates/missing files/SQL metacharacters/cache clearing, project save/backup/checkpoints/corruption fallback/autosave/unclean shutdown/temp cleanup, logger sanitisation/rotation/caps/report/clear with synthetic secrets, overlay and histogram rasterisation.
+
+Real-application testing is recorded in `docs/design/PART3_DESIGN.md` with screenshots. Not tested: macOS, Linux, 8 GB systems, disk exhaustion, GPU failures, screen readers, multiple monitors.
+
+
 ## 0.2 increment (Windows 10, 2026-11-26)
 
 46 automated tests pass with default features (`cargo test --locked --workspace`) and 47 with `--all-features` (adds the CLIP gradient test): edit geometry, undo/redo, straighten bounds, every selection shape, secure redaction pixel replacement, visual concealment, inverted selections, transparency flattening, recipe limits; metadata inspection of clean encoder output and injected EXIF/XMP/IPTC/comments/PNG text/ICC/trailing images; hostile container inputs; QR detection, classification and tiling for small codes; checksum-validated identifiers (Luhn, IBAN, ABA, ICAO MRZ, SIN); credential and network rules; country rules; values never serialized; profile round-trips and evidence thresholds; pipeline blocking of unredacted credential codes, verified redaction in the reopened PNG and JPEG; batch collection, recursion, exclusion, limits, Unix symlink refusal, review queue, duplicates, errors, cancellation, folder monitor; CLI scan/process/batch/profiles.
@@ -60,3 +67,20 @@ Do not claim complete immunity, commercially unrestricted upstream rights, cross
 ## Hosted platform verification
 
 The initial foundation commit `124a906130166578d985e9f445034ed139e1fc16` passed all jobs in [Rust verification run 45868746998](https://github.com/test3457890/Ai-Photo-Defense-App/actions/runs/45868746998): Clippy, native-host tests, and target builds for Linux x64, Windows MSVC x64, macOS Intel and macOS Apple Silicon. [Dependency security run 45868746947](https://github.com/test3457890/Ai-Photo-Defense-App/actions/runs/45868746947) also passed. These verify compilation and automated tests, not Windows/macOS GUI runtime behavior or installers. New commits require fresh CI checks.
+
+
+## Part 4 (2026-11-26)
+
+Automated (`cargo test --workspace`, 88 tests; 89 with `--all-features`), including the `photo-media` crate (12 tests plus one ignored helper that writes the synthetic MP4 used for manual testing): format detection signatures and extension mismatch; MP4 probe, lossless metadata removal with `moov` first and last, chunk verification and 1,500 mutations; Matroska probe; audio decode, analysis, mute/bleep export with sample-exact verification and the crafted-WAV panic case; protection engine constraints with a fixture objective (masking ratio below 1.5, SNR floor, no clipping, refusal without objective); subtitle parse, scan and redaction; temporal flicker metrics; GIF/BMP metadata and image mutation fuzzing; media collection only when requested.
+
+Manual, real Windows 10 desktop (release build), screenshots in `docs/screenshots/part4-*.png`: imported a folder with a WAV, an MP4 carrying GPS/device/XMP/timed-metadata, and an SRT containing an e-mail address and phone number; checked Essential, Professional and Technical views; added a bleep at 1.5 to 2.5 s and exported; played A and B loudness-matched; removed MP4 metadata; exported redacted subtitles. Independent CLI checks of the outputs: the MP4 had no remaining privacy findings and kept its video and audio tracks; the WAV had 122,868 frames in and out (length difference 0) with segmental SNR 64.1 dB; the SRT's second cue read `[redacted]`.
+
+Not tested: real camera or phone videos (none available on the test machine; synthetic MP4 only), Matroska files from real muxers, Linux/macOS runtime, audio devices other than the default output, voice-cloning resistance (no model).
+
+## Part 5 (2026-11-26)
+
+Automated: 92 tests (93 with `--all-features`) on Windows 10, plus CI on Linux x64, Windows x64, macOS Intel and macOS Apple Silicon. New: concealment recoverability (`weak_concealment_leaves_text_structure`: blur sigma 1 keeps more than 30% of stroke contrast, sigma 12 less than 5%; mosaic 4 px keeps more than 20%, 24 px less than 5%), AIFF decode and verified export, watermark embed/detect with JPEG 90/80/70 survival, no detection with a wrong key or on an unmarked image, no detection after resizing, small-image refusal.
+
+Manual (release build): text fields checked while typing and after focus moved elsewhere (owner's bug); Professional mode with a photo; watermark CLI on a real 1600 x 1067 photo at JPEG quality 80 (detected, confidence 11.7; wrong passphrase and unmarked original not detected).
+
+Not checked on screen: the inline weak-strength warning in the Redaction group (logic is unit-tested).

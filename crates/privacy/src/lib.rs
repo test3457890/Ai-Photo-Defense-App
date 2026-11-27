@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 pub mod codes;
+pub mod forensics;
 pub mod metadata;
 pub mod profiles;
 pub mod text;
