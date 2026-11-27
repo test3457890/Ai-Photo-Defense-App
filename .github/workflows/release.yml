@@ -160,5 +160,6 @@ jobs:
           find release-artifacts -type f \( -name '*.msi' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name 'sbom.cdx.json' \) -exec cp {} upload/ \;
           (cd upload && sha256sum * > SHA256SUMS.txt)
           gh release create "${{ github.ref_name }}" upload/* \
+            --repo "${{ github.repository }}" \
             --title "AI Photo Defense ${{ github.ref_name }}" \
             --generate-notes
