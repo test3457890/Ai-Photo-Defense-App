@@ -10,4 +10,13 @@ publish.workspace = true
 anyhow.workspace = true
 image.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 photo-core.workspace = true
+photo-privacy.workspace = true
+photo-models.workspace = true
+photo-engine = { workspace = true, optional = true }
+
+[features]
+default = []
+faces = ["photo-privacy/faces"]
+clip = ["dep:photo-engine", "photo-engine/clip"]

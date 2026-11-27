@@ -225,6 +225,64 @@ pub fn ask_ollama_local(cfg: &OllamaConfig, prompt: &str) -> Result<String> {
         .to_string())
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ProtectionAdvice {
+    pub recommended_profile: &'static str,
+    pub summary: String,
+    pub steps: Vec<String>,
+}
+
+/// Deterministic offline advisor that suggests protection settings without requiring
+/// Ollama or any network connection.
+pub fn suggest_protection_settings(
+    findings_count: usize,
+    has_faces: bool,
+    has_credentials: bool,
+    hardware: &HardwareProfile,
+) -> ProtectionAdvice {
+    let mut steps = vec!["Export metadata-free copy (strips EXIF, GPS, XMP, ICC).".to_string()];
+    if has_credentials || findings_count > 0 {
+        steps.push(
+            "Use opaque solid redaction (not blur) for QR codes, barcodes, and credentials.".into(),
+        );
+    }
+    if has_faces {
+        steps.push(
+            "Apply regional face-aware protection or opaque redaction before public sharing."
+                .into(),
+        );
+    }
+    if hardware.available_ram_mib < 4096 {
+        steps.push(
+            "Low RAM detected (<4 GiB): keep batch sizes small and prefer CPU-light presets."
+                .into(),
+        );
+    }
+    let recommended_profile = if has_credentials {
+        "Maximum Privacy"
+    } else if has_faces || findings_count > 0 {
+        "Social Media"
+    } else {
+        "Balanced"
+    };
+    ProtectionAdvice {
+        recommended_profile,
+        summary: format!(
+            "{findings_count} finding(s), faces={has_faces}, credentials={has_credentials}. Recommended profile: {recommended_profile}."
+        ),
+        steps,
+    }
+}
+
+/// Optional local-Ollama explanation of a Validation Suite Markdown report.
+pub fn explain_validation_with_ollama(cfg: &OllamaConfig, report_markdown: &str) -> Result<String> {
+    let truncated: String = report_markdown.chars().take(6000).collect();
+    let prompt = format!(
+        "Explain this AI Photo Defense validation report in plain, honest language for a non-expert user. Do not invent percentages or claim protection where tests are Not tested or Unsupported:\n\n{truncated}"
+    );
+    ask_ollama_local(cfg, &prompt)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

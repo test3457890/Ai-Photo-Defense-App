@@ -304,6 +304,126 @@ pub fn quality(a: &DynamicImage, b: &DynamicImage) -> Result<Quality> {
     })
 }
 
+/// Extended image quality metrics for Validation Center (PSNR, SSIM, CIELAB Delta-E,
+/// multi-scale gradient perceptual proxy, artifact score, resolution, and file sizes).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtendedQuality {
+    pub base: Quality,
+    /// Mean CIELAB Delta-E76 color difference between original and candidate.
+    pub delta_e_mean: f64,
+    /// Maximum CIELAB Delta-E76 color difference.
+    pub delta_e_max: f64,
+    /// Multi-scale structural/gradient perceptual distance proxy in [0, 1] (0 = identical).
+    /// Note: this is a deterministic structural proxy, not neural LPIPS weights.
+    pub perceptual_distance_proxy: f64,
+    /// High-frequency residual / blocking artifact indicator (0 = no added artifacts).
+    pub artifact_score: f64,
+    pub resolution: [u32; 2],
+    pub original_bytes: Option<u64>,
+    pub candidate_bytes: Option<u64>,
+}
+
+fn srgb_to_lab(rgb: [u8; 3]) -> [f64; 3] {
+    let lin = |c: u8| {
+        let v = f64::from(c) / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let r = lin(rgb[0]);
+    let g = lin(rgb[1]);
+    let b = lin(rgb[2]);
+    // sRGB D65 -> XYZ
+    let x = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047;
+    let y = 0.2126729 * r + 0.7151522 * g + 0.0721750 * b;
+    let z = (0.0193339 * r + 0.1191920 * g + 0.9503041 * b) / 1.08883;
+    let f = |t: f64| {
+        if t > 0.008856 {
+            t.cbrt()
+        } else {
+            7.787 * t + 16.0 / 116.0
+        }
+    };
+    let fx = f(x);
+    let fy = f(y);
+    let fz = f(z);
+    [116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)]
+}
+
+pub fn detailed_quality(
+    a: &DynamicImage,
+    b: &DynamicImage,
+    original_bytes: Option<u64>,
+    candidate_bytes: Option<u64>,
+) -> Result<ExtendedQuality> {
+    let base = quality(a, b)?;
+    let a_rgb = a.to_rgb8();
+    let b_rgb = b.to_rgb8();
+    let w = a_rgb.width() as usize;
+    let h = a_rgb.height() as usize;
+    let n = (w * h).max(1) as f64;
+
+    let mut de_sum = 0.0f64;
+    let mut de_max = 0.0f64;
+    for (pa, pb) in a_rgb.pixels().zip(b_rgb.pixels()) {
+        let la = srgb_to_lab(pa.0);
+        let lb = srgb_to_lab(pb.0);
+        let de =
+            ((la[0] - lb[0]).powi(2) + (la[1] - lb[1]).powi(2) + (la[2] - lb[2]).powi(2)).sqrt();
+        de_sum += de;
+        de_max = de_max.max(de);
+    }
+
+    // Gradient difference proxy for perceptual distance & high-freq artifact score
+    let luma = |img: &RgbImage, x: usize, y: usize| -> f64 {
+        let p = img.get_pixel(x as u32, y as u32).0;
+        0.2126 * f64::from(p[0]) + 0.7152 * f64::from(p[1]) + 0.0722 * f64::from(p[2])
+    };
+    let mut grad_diff = 0.0f64;
+    let mut lap_diff = 0.0f64;
+    if w >= 3 && h >= 3 {
+        for y in 1..h - 1 {
+            for x in 1..w - 1 {
+                let gax = luma(&a_rgb, x + 1, y) - luma(&a_rgb, x - 1, y);
+                let gay = luma(&a_rgb, x, y + 1) - luma(&a_rgb, x, y - 1);
+                let gbx = luma(&b_rgb, x + 1, y) - luma(&b_rgb, x - 1, y);
+                let gby = luma(&b_rgb, x, y + 1) - luma(&b_rgb, x, y - 1);
+                grad_diff += ((gax - gbx).powi(2) + (gay - gby).powi(2)).sqrt() / 255.0;
+
+                let la = 4.0 * luma(&a_rgb, x, y)
+                    - luma(&a_rgb, x - 1, y)
+                    - luma(&a_rgb, x + 1, y)
+                    - luma(&a_rgb, x, y - 1)
+                    - luma(&a_rgb, x, y + 1);
+                let lb = 4.0 * luma(&b_rgb, x, y)
+                    - luma(&b_rgb, x - 1, y)
+                    - luma(&b_rgb, x + 1, y)
+                    - luma(&b_rgb, x, y - 1)
+                    - luma(&b_rgb, x, y + 1);
+                lap_diff += (la - lb).abs() / 255.0;
+            }
+        }
+    }
+    let interior = ((w.saturating_sub(2)) * (h.saturating_sub(2))).max(1) as f64;
+    let ssim_dist = (1.0 - base.ssim_luma_8x8).clamp(0.0, 1.0);
+    let grad_dist = (grad_diff / interior).clamp(0.0, 1.0);
+    let perceptual_distance_proxy = (0.6 * ssim_dist + 0.4 * grad_dist).clamp(0.0, 1.0);
+    let artifact_score = (lap_diff / interior).clamp(0.0, 1.0);
+
+    Ok(ExtendedQuality {
+        base,
+        delta_e_mean: de_sum / n,
+        delta_e_max: de_max,
+        perceptual_distance_proxy,
+        artifact_score,
+        resolution: [a.width(), a.height()],
+        original_bytes,
+        candidate_bytes,
+    })
+}
+
 pub fn difference(a: &DynamicImage, b: &DynamicImage, gain: u8) -> Result<DynamicImage> {
     ensure!(
         a.width() == b.width() && a.height() == b.height(),

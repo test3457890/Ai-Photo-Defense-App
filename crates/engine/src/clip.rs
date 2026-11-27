@@ -252,6 +252,98 @@ impl ClipObjective {
         let x = Tensor::from_slice(input, input.len(), &Device::Cpu)?;
         Ok(self.features(&x)?.sqr()?.mean_all()?.to_scalar()?)
     }
+
+    /// Computes the L2-normalized CLIP visual embedding vector for `input`.
+    pub fn normalized_embedding(&self, input: &[f32]) -> Result<Vec<f32>> {
+        ensure!(
+            input.len() == self.width * self.height * 3,
+            "Model input shape mismatch"
+        );
+        let x = Tensor::from_slice(input, input.len(), &Device::Cpu)?;
+        let feat = self.features(&x)?.flatten_all()?;
+        let norm = feat.sqr()?.sum_all()?.sqrt()?.to_scalar::<f32>()?;
+        let vec = feat.to_vec1::<f32>()?;
+        if norm > 1e-8 {
+            Ok(vec.into_iter().map(|v| v / norm).collect())
+        } else {
+            Ok(vec)
+        }
+    }
+
+    /// Computes cosine similarity in `[-1.0, 1.0]` between two images under CLIP ViT-B/32.
+    pub fn cosine_similarity(&self, a: &[f32], b: &[f32]) -> Result<f32> {
+        let ea = self.normalized_embedding(a)?;
+        let eb = self.normalized_embedding(b)?;
+        let dot: f32 = ea.iter().zip(eb.iter()).map(|(x, y)| x * y).sum();
+        Ok(dot.clamp(-1.0, 1.0))
+    }
+}
+
+/// Hardened CLIP objective that minimizes cosine similarity to the original image's
+/// L2-normalized embedding (rather than merely shrinking unnormalized feature energy),
+/// with optional Expectation over Transformation (EoT) jitter for compression/crop resilience.
+pub struct ClipCosineObjective {
+    clip: ClipObjective,
+    target_norm_emb: Tensor,
+    eot_jitter: bool,
+    step_counter: std::sync::atomic::AtomicU64,
+}
+
+impl ClipCosineObjective {
+    pub fn new(clip: ClipObjective, original: &[f32], eot_jitter: bool) -> Result<Self> {
+        let emb = clip.normalized_embedding(original)?;
+        let len = emb.len();
+        let target_norm_emb = Tensor::from_vec(emb, (1, len), &Device::Cpu)?;
+        Ok(Self {
+            clip,
+            target_norm_emb,
+            eot_jitter,
+            step_counter: std::sync::atomic::AtomicU64::new(0),
+        })
+    }
+
+    pub fn clip(&self) -> &ClipObjective {
+        &self.clip
+    }
+}
+
+impl Objective for ClipCosineObjective {
+    fn name(&self) -> &str {
+        if self.eot_jitter {
+            "clip-vit-b32-cosine-eot-divergence"
+        } else {
+            "clip-vit-b32-cosine-divergence"
+        }
+    }
+
+    fn loss_gradient(&self, input: &[f32]) -> Result<(f32, Vec<f32>)> {
+        ensure!(
+            input.len() == self.clip.width * self.clip.height * 3,
+            "Model input shape mismatch"
+        );
+        let x = Var::from_slice(input, input.len(), &Device::Cpu)?;
+        let mut x_in = x.as_tensor().clone();
+        if self.eot_jitter {
+            // Deterministic pseudo-random per-step small scale/gain & channel jitter (EoT proxy)
+            let s = self
+                .step_counter
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let scale = 0.96 + ((s % 5) as f32) * 0.02; // [0.96, 1.04]
+            let bias = (((s * 7) % 5) as f32 - 2.0) * 0.005;
+            x_in = ((x_in * (scale as f64))? + (bias as f64))?;
+        }
+        let feat = self.clip.features(&x_in)?;
+        let norm = (feat.sqr()?.sum_all()? + 1e-8)?.sqrt()?;
+        let norm_feat = feat.broadcast_div(&norm)?;
+        let cos_sim = norm_feat.mul(&self.target_norm_emb)?.sum_all()?;
+        // Optimizer maximizes loss, so loss = 1.0 - cos_sim
+        let loss = (cos_sim.neg()? + 1.0)?;
+        let gradient = loss
+            .backward()?
+            .remove(&x)
+            .ok_or_else(|| anyhow::anyhow!("Model produced no input gradient"))?;
+        Ok((loss.to_scalar()?, gradient.to_vec1()?))
+    }
 }
 impl Objective for ClipObjective {
     fn name(&self) -> &str {
@@ -359,5 +451,141 @@ mod tests {
             let numeric = (plus - minus) / 0.002;
             assert!((g[i] - numeric).abs() < 0.0001, "{} != {}", g[i], numeric);
         }
+    }
+
+    #[test]
+    fn cosine_divergence_beats_feature_energy_suppression() {
+        let orig: Vec<f32> = (0..16 * 16 * 3)
+            .map(|i| 0.25 + ((i * 13) % 37) as f32 * 0.015)
+            .collect();
+        let make_tiny = || {
+            let c = Config {
+                side: 4,
+                patch: 2,
+                hidden: 8,
+                heads: 2,
+                layers: 1,
+                intermediate: 12,
+                projection: 4,
+            };
+            let mut weights = HashMap::new();
+            let mut insert = |name: String, dims: Vec<usize>, scale: f32, norm: bool| {
+                let n = dims.iter().product::<usize>();
+                let data: Vec<f32> = (0..n)
+                    .map(|i| {
+                        if norm {
+                            1.
+                        } else {
+                            (((i * 17 % 101) as f32 - 50.) / 50.0) * scale
+                        }
+                    })
+                    .collect();
+                weights.insert(name, Tensor::from_vec(data, dims, &Device::Cpu).unwrap());
+            };
+            insert(
+                "vision_model.embeddings.patch_embedding.weight".into(),
+                vec![8, 3, 2, 2],
+                1.0,
+                false,
+            );
+            insert(
+                "vision_model.embeddings.class_embedding".into(),
+                vec![8],
+                0.01,
+                false,
+            );
+            insert(
+                "vision_model.embeddings.position_embedding.weight".into(),
+                vec![5, 8],
+                0.01,
+                false,
+            );
+            for p in [
+                "vision_model.pre_layrnorm",
+                "vision_model.post_layernorm",
+                "vision_model.encoder.layers.0.layer_norm1",
+                "vision_model.encoder.layers.0.layer_norm2",
+            ] {
+                insert(format!("{p}.weight"), vec![8], 0.0, true);
+                insert(format!("{p}.bias"), vec![8], 0.0, false);
+            }
+            for name in ["q_proj", "k_proj"] {
+                let p = format!("vision_model.encoder.layers.0.self_attn.{name}");
+                insert(format!("{p}.weight"), vec![8, 8], 0.05, false);
+                insert(format!("{p}.bias"), vec![8], 0.0, false);
+            }
+            for name in ["v_proj", "out_proj"] {
+                let p = format!("vision_model.encoder.layers.0.self_attn.{name}");
+                insert(format!("{p}.weight"), vec![8, 8], 0.5, false);
+                insert(format!("{p}.bias"), vec![8], 0.0, false);
+            }
+            for (name, out, input) in [("fc1", 12, 8), ("fc2", 8, 12)] {
+                let p = format!("vision_model.encoder.layers.0.mlp.{name}");
+                insert(format!("{p}.weight"), vec![out, input], 1.0, false);
+                insert(format!("{p}.bias"), vec![out], 0.0, false);
+            }
+            insert("visual_projection.weight".into(), vec![4, 8], 1.0, false);
+            ClipObjective::new(
+                VarBuilder::from_tensors(weights, DType::F32, &Device::Cpu),
+                c,
+                16,
+                16,
+            )
+            .unwrap()
+        };
+
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let old_obj = make_tiny();
+        let old_out = crate::optimize(
+            &orig,
+            &[crate::WeightedObjective {
+                objective: &old_obj,
+                weight: 1.0,
+            }],
+            crate::Settings {
+                epsilon: 16. / 255.,
+                step_size: 2. / 255.,
+                steps: 15,
+                fidelity_penalty: 0.02,
+            },
+            &cancel,
+        )
+        .unwrap();
+        let old_cos = old_obj.cosine_similarity(&orig, &old_out.pixels).unwrap();
+
+        let new_obj = ClipCosineObjective::new(make_tiny(), &orig, true).unwrap();
+        let new_out = crate::optimize_hardened(
+            &orig,
+            16,
+            16,
+            &[crate::WeightedObjective {
+                objective: &new_obj,
+                weight: 1.0,
+            }],
+            crate::HardenedSettings {
+                base: crate::Settings {
+                    epsilon: 16. / 255.,
+                    step_size: 2. / 255.,
+                    steps: 15,
+                    fidelity_penalty: 0.02,
+                },
+                momentum: 0.9,
+                ti_radius: 1,
+                adaptive_texture_mask: false,
+                frequency_projection: true,
+                max_dct_band: 6,
+            },
+            None,
+            &cancel,
+        )
+        .unwrap();
+        let new_cos = new_obj
+            .clip()
+            .cosine_similarity(&orig, &new_out.pixels)
+            .unwrap();
+        assert!(
+            new_cos < old_cos,
+            "Expected hardened cosine-EoT ({new_cos:.8}) < legacy energy suppression ({old_cos:.8})"
+        );
     }
 }

@@ -29,10 +29,10 @@ tempfile.workspace = true
 
 [features]
 default = []
-experimental-clip = ["dep:photo-engine", "photo-engine/clip"]
+experimental-clip = ["dep:photo-engine", "photo-engine/clip", "photo-lab/clip"]
 stt = ["photo-media/stt"]
 voice-protect = ["photo-media/voice-protect"]
-faces = ["photo-privacy/faces"]
+faces = ["photo-privacy/faces", "photo-lab/faces"]
 c2pa = ["photo-privacy/c2pa"]
 video = ["photo-media/video"]
 opus = ["photo-media/opus"]

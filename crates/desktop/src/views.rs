@@ -2162,11 +2162,136 @@ fn forensics(app: &App) -> El<'_> {
 }
 
 fn lab(app: &App) -> El<'_> {
+    use photo_lab::validation::ValidationMode;
     let mut c = column![
-        row![btn("Run transformation tests", app.busy.is_none().then_some(Message::Lab)), small("Measures pixel differences that survive transforms between the original and its export. AI resistance is not evaluated.")].spacing(8).align_y(Alignment::Center),
-        text("Test                         PSNR (dB)       SSIM          Time (ms)").size(FONT_SMALL).font(iced::Font::MONOSPACE),
+        small("VALIDATION CENTER (honest local assessment — no overall protection % is invented)"),
+        row![
+            btn(
+                "Quick Test",
+                app.busy
+                    .is_none()
+                    .then_some(Message::RunValidation(ValidationMode::QuickProtectionTest))
+            ),
+            btn(
+                "Comprehensive Test",
+                app.busy.is_none().then_some(Message::RunValidation(
+                    ValidationMode::ComprehensiveProtectionTest
+                ))
+            ),
+            btn(
+                "Social Media Durability",
+                app.busy.is_none().then_some(Message::RunValidation(
+                    ValidationMode::SocialMediaDurabilityTest
+                ))
+            ),
+            btn(
+                "Export .md",
+                app.validation_report
+                    .is_some()
+                    .then_some(Message::ExportValidationReport(true))
+            ),
+            btn(
+                "Export .json",
+                app.validation_report
+                    .is_some()
+                    .then_some(Message::ExportValidationReport(false))
+            ),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
     ]
     .spacing(6);
+
+    if let Some(rep) = &app.validation_report {
+        c = c
+            .push(small(format!(
+                "Quality: {}x{} · PSNR {} dB · SSIM {:.5} · ΔE mean {:.3} (max {:.3}) · Perceptual proxy {:.4} · Artifacts {:.4}",
+                rep.quality.resolution[0],
+                rep.quality.resolution[1],
+                rep.quality
+                    .base
+                    .psnr_db
+                    .map(|p| format!("{p:.2}"))
+                    .unwrap_or_else(|| "inf".into()),
+                rep.quality.base.ssim_luma_8x8,
+                rep.quality.delta_e_mean,
+                rep.quality.delta_e_max,
+                rep.quality.perceptual_distance_proxy,
+                rep.quality.artifact_score,
+            )))
+            .push(
+                text("Category                   Model                          Result               Details")
+                    .size(FONT_SMALL)
+                    .font(iced::Font::MONOSPACE),
+            );
+        for t in &rep.tests {
+            c = c.push(
+                text(format!(
+                    "{:<26} {:<30} {:<20} {}",
+                    t.category.label(),
+                    t.model_name,
+                    t.classification.label(),
+                    t.details
+                ))
+                .size(FONT_SMALL)
+                .font(iced::Font::MONOSPACE),
+            );
+        }
+        if let Some(dur) = &rep.durability {
+            c = c
+                .push(horizontal_rule(1))
+                .push(small(
+                    "DURABILITY TRANSFORMS (SIM = local simulation, not an actual platform upload)",
+                ))
+                .push(
+                    text("Transform                  Type       PSNR (dB)    SSIM")
+                        .size(FONT_SMALL)
+                        .font(iced::Font::MONOSPACE),
+                );
+            for m in &dur.measurements {
+                c = c.push(
+                    text(format!(
+                        "{:<26} {:<10} {:>9} {:>10.6}",
+                        m.transformation,
+                        if m.is_simulated {
+                            "SIMULATED"
+                        } else {
+                            "STANDARD"
+                        },
+                        m.quality
+                            .psnr_db
+                            .map(|x| format!("{x:.2}"))
+                            .unwrap_or_else(|| "inf".into()),
+                        m.quality.ssim_luma_8x8,
+                    ))
+                    .size(FONT_SMALL)
+                    .font(iced::Font::MONOSPACE),
+                );
+            }
+        }
+        for lim in &rep.limitations {
+            c = c.push(small(format!("Note: {lim}")));
+        }
+    }
+
+    c = c
+        .push(horizontal_rule(1))
+        .push(
+            row![
+                btn(
+                    "Run 8-transform lab",
+                    app.busy.is_none().then_some(Message::Lab)
+                ),
+                small("Legacy 8-transform pixel-survival table (AI resistance is not evaluated).")
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .push(
+            text("Test                         PSNR (dB)       SSIM          Time (ms)")
+                .size(FONT_SMALL)
+                .font(iced::Font::MONOSPACE),
+        );
     if let Some(r) = &app.lab {
         for m in &r.measurements {
             c = c.push(
@@ -2185,10 +2310,13 @@ fn lab(app: &App) -> El<'_> {
             );
         }
     }
-    c.push(horizontal_rule(1))
-        .push(small("ADVERSARIAL PROTECTION"))
-        .push(small("Quick / Balanced / Maximum / Custom: unavailable. No validated defense model is installed and no preset has measured effectiveness. The experimental CLIP objective is available only through the CLI research feature and is not a protection claim."))
-        .into()
+    scrollable(
+        c.push(horizontal_rule(1))
+            .push(small("ADVERSARIAL PROTECTION"))
+            .push(small("Quick / Balanced / Maximum / Custom: unavailable in GUI until validated models are installed. The experimental CLIP objective (including hardened MI-FGSM + TI-FGSM + EoT cosine divergence) is available through the CLI research feature."))
+    )
+    .height(Length::Fill)
+    .into()
 }
 
 fn formats(app: &App) -> El<'_> {

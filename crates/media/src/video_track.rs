@@ -54,6 +54,100 @@ pub struct FrameVerifyReport {
     pub passed: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrackSummary {
+    pub total_frames: usize,
+    pub occluded_frames: usize,
+    pub scene_cut_frames: usize,
+    pub low_confidence_frames: usize,
+    pub requires_manual_review: bool,
+    pub warnings: Vec<String>,
+}
+
+/// Summarizes tracking confidence and emits fail-closed user warnings whenever occlusion,
+/// scene cuts, or low-confidence frames require manual keyframe review.
+pub fn summarize_track(tracked: &[TrackedBox]) -> TrackSummary {
+    let total_frames = tracked.len();
+    let occluded_frames = tracked
+        .iter()
+        .filter(|b| b.status == TrackStatus::Occluded)
+        .count();
+    let scene_cut_frames = tracked
+        .iter()
+        .filter(|b| b.status == TrackStatus::SceneCut)
+        .count();
+    let low_confidence_frames = tracked
+        .iter()
+        .filter(|b| b.confidence < 0.50 && b.status != TrackStatus::Seed)
+        .count();
+    let mut warnings = Vec::new();
+    if occluded_frames > 0 {
+        warnings.push(format!(
+            "{occluded_frames} frame(s) had temporary occlusion; fail-safe expanded redaction applied — review manually."
+        ));
+    }
+    if scene_cut_frames > 0 {
+        warnings.push(format!(
+            "{scene_cut_frames} scene cut(s) detected; tracking stopped at cuts — add keyframes after cuts if sensitive objects reappear."
+        ));
+    }
+    if low_confidence_frames > 0 {
+        warnings.push(format!(
+            "{low_confidence_frames} frame(s) had low tracking confidence (<0.50); verify redaction placement before export."
+        ));
+    }
+    let requires_manual_review =
+        occluded_frames > 0 || scene_cut_frames > 0 || low_confidence_frames > 0;
+    TrackSummary {
+        total_frames,
+        occluded_frames,
+        scene_cut_frames,
+        low_confidence_frames,
+        requires_manual_review,
+        warnings,
+    }
+}
+
+/// Applies a manual bounding-box correction to a tracked frame and regenerates `RedactRect`s.
+pub fn apply_manual_box_override(
+    tracked: &mut [TrackedBox],
+    frame_idx: usize,
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    blur: bool,
+) -> Vec<RedactRect> {
+    if let Some(b) = tracked.iter_mut().find(|b| b.frame_idx == frame_idx) {
+        b.x = x;
+        b.y = y;
+        b.width = width.max(4);
+        b.height = height.max(4);
+        b.confidence = 1.0;
+        b.status = TrackStatus::Seed;
+    }
+    let half_dt = if tracked.len() > 1 {
+        ((tracked.last().map(|f| f.pts_s).unwrap_or(0.0) - tracked[0].pts_s)
+            / (tracked.len() - 1) as f64)
+            * 0.55
+    } else {
+        0.05
+    };
+    tracked
+        .iter()
+        .filter(|b| !matches!(b.status, TrackStatus::SceneCut | TrackStatus::OutOfFrame))
+        .map(|b| RedactRect {
+            x: b.x,
+            y: b.y,
+            width: b.width,
+            height: b.height,
+            from_s: (b.pts_s - half_dt).max(0.0),
+            to_s: b.pts_s + half_dt,
+            blur,
+        })
+        .collect()
+}
+
 fn mean_abs_diff(a: &[u8], b: &[u8]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
@@ -334,9 +428,15 @@ pub fn track_object_in_mp4(
                 cur_y = by as i32;
             }
 
-            // Motion-adaptive padding to absorb rapid-motion blur.
+            // Motion-adaptive padding to absorb rapid-motion blur; expand fail-safe margin
+            // during temporary occlusion so sensitive regions do not peek out.
             let speed = vx.abs().max(vy.abs()) as u32;
-            let pad = (speed / 4).min(8);
+            let base_pad = (speed / 4).min(8);
+            let pad = if occluded {
+                (base_pad + 12).min(24)
+            } else {
+                base_pad
+            };
             let ax = (cur_x.max(0) as u32).saturating_sub(pad);
             let ay = (cur_y.max(0) as u32).saturating_sub(pad);
             let aw = (cur_w + pad * 2).min(frames[ui].width - ax);

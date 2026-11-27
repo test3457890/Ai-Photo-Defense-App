@@ -5260,7 +5260,11 @@ dependencies = [
  "anyhow",
  "image 0.25.10",
  "photo-core",
+ "photo-engine",
+ "photo-models",
+ "photo-privacy",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

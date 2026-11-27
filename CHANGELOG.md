@@ -2,6 +2,18 @@
 
 ## 0.6.0 (unreleased)
 
+### Protection Hardening & Validation Suite (`gemini/protection-validation`, 2026-11-27)
+
+- **Hardened Adversarial Engine (`photo-engine`):** Added `optimize_hardened` with MI-FGSM momentum, TI-FGSM gradient smoothing, Sobel adaptive texture masking (`compute_adaptive_texture_mask`), soft-feathered regional masking (`build_regional_mask`), 2x2-block PGD initial offset, and pure-Rust 8x8 2D DCT mid-frequency projection & `FrequencyBandObjective` (`crates/engine/src/frequency.rs`).
+- **Fixed CLIP Objective (`photo-engine::clip`):** Added `ClipCosineObjective` (minimizes cosine similarity to original L2-normalized embedding with differentiable EoT scale/bias jitter) and `cosine_similarity()`. Fixed Candle `clamp()` autograd detachment bug. Added `--hardened` flag to CLI `experimental-clip`.
+- **Extended Image Quality Metrics (`photo-core`):** Added `ExtendedQuality` and `detailed_quality()` computing CIELAB $\Delta E_{76}$ color accuracy, multi-scale gradient perceptual distance proxy, Laplacian artifact score, resolution, and file sizes.
+- **23-Transform Real-World Durability Suite (`photo-lab`):** Added `evaluate_durability()` covering JPEG 95/85/70/50, WebP lossless, PNG conversion, simulated Instagram/Facebook/screenshot/AI-enhance transforms (`is_simulated = true`), crops, resizes, rotation, color/tone shifts, Gaussian blurs, 3x3 median filter, and 3x JPEG re-export chain.
+- **Integrated Validation Engine & UI (`photo-lab::validation`, `photo-cli`, `photo-desktop`):** Added `validate` and `durability` CLI commands and integrated the Validation Center into Desktop Technical > Defense Lab with Quick/Comprehensive/Durability modes, honest classifications (`Passed`, `Partially effective`, `Failed`, `Inconclusive`, `Not tested`, `Unsupported`), no invented overall percentage, and `.md`/`.json` report export.
+- **Video Tracking Safety & Offline AI Advisor (`photo-media`, `photo-models`):** Added fail-safe occlusion mask expansion (`+12` px), `summarize_track()` warnings, and `apply_manual_box_override()` in `video_track.rs`; added deterministic offline `suggest_protection_settings()` and optional localhost-Ollama `explain_validation_with_ollama()` in `ai_assistant.rs`.
+- **Windows CLI Fix:** Wrapped `photo-cli` `main()` in an 8 MiB stack thread to prevent Windows 1 MiB default-stack overflow in `clap::Parser::parse()`.
+
+### Part 5 Integration & Real-World Validation (Claude & Antigravity)
+
 Integration of Antigravity's Part 5 branches, reviewed and verified by Claude. Heavy additions are optional cargo features; release installers include `faces` and `c2pa`.
 
 - Face detection (`faces`): pure-Rust `tract-onnx` running UltraFace RFB-320 (MIT), chosen by the user as a local `.onnx` file. Privacy Scan reports face regions; Professional mode "Select all faces". Checked on public-domain photographs: 1 of 1 and 3 of 3 faces found, none on a synthetic landscape. No precision/recall figure: no labelled dataset was used.

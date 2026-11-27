@@ -44,6 +44,9 @@ enum Command {
         epsilon: u8,
         #[arg(long, default_value_t = 10)]
         steps: u32,
+        /// Use hardened MI-FGSM + TI-FGSM + EoT cosine divergence + mid-frequency DCT projection.
+        #[arg(long)]
+        hardened: bool,
     },
     /// Re-encode pixels without source EXIF/GPS/XMP/ICC. Never overwrites files.
     Export {
@@ -69,6 +72,33 @@ enum Command {
         candidate: PathBuf,
         #[arg(short, long)]
         report: PathBuf,
+    },
+    /// Run the 23-transform Real-World Durability Suite (distinguishing simulated platform transforms).
+    Durability {
+        original: PathBuf,
+        candidate: PathBuf,
+        #[arg(short, long)]
+        report: PathBuf,
+    },
+    /// Run the AI Photo Defense Validation Suite (quality metrics + real local models where installed).
+    Validate {
+        original: PathBuf,
+        candidate: PathBuf,
+        /// Mode: quick, comprehensive, or durability.
+        #[arg(long, default_value = "comprehensive")]
+        mode: String,
+        #[arg(long)]
+        face_model: Option<PathBuf>,
+        #[arg(long)]
+        clip_model: Option<PathBuf>,
+        #[arg(long)]
+        clip_manifest: Option<PathBuf>,
+        /// Write JSON report to a new file.
+        #[arg(short, long)]
+        report: Option<PathBuf>,
+        /// Write Markdown report to a new file.
+        #[arg(long)]
+        markdown: Option<PathBuf>,
     },
     /// Verify a local safetensors file against an independently reviewed manifest.
     VerifyModel { model: PathBuf, manifest: PathBuf },
@@ -430,6 +460,19 @@ impl EditArgs {
     }
 }
 fn main() -> Result<()> {
+    // Windows default main thread stack is 1 MiB, which clap's large Command enum can exceed
+    // in unoptimized debug builds; run on an 8 MiB stack matching Linux/macOS.
+    let handle = std::thread::Builder::new()
+        .name("photo-defense-cli".into())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(run_cli)
+        .context("Spawn CLI thread")?;
+    handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("CLI thread panicked"))?
+}
+
+fn run_cli() -> Result<()> {
     match Args::parse().command {
         Command::Inspect { input } => {
             let p = load(&input)?;
@@ -495,6 +538,55 @@ fn main() -> Result<()> {
             let r = photo_lab::evaluate(&a.pixels, &b.pixels)?;
             save_new(&report, &serde_json::to_vec_pretty(&r)?)?;
         }
+        Command::Durability {
+            original,
+            candidate,
+            report,
+        } => {
+            let a = load(&original)?;
+            let b = load(&candidate)?;
+            let r = photo_lab::evaluate_durability(&a.pixels, &b.pixels)?;
+            save_new(&report, &serde_json::to_vec_pretty(&r)?)?;
+            println!(
+                "Durability report saved ({} transforms) to {}",
+                r.measurements.len(),
+                report.display()
+            );
+        }
+        Command::Validate {
+            original,
+            candidate,
+            mode,
+            face_model,
+            clip_model,
+            clip_manifest,
+            report,
+            markdown,
+        } => {
+            let a = load(&original)?;
+            let b = load(&candidate)?;
+            let val_mode = match mode.to_ascii_lowercase().as_str() {
+                "quick" => photo_lab::validation::ValidationMode::QuickProtectionTest,
+                "durability" => photo_lab::validation::ValidationMode::SocialMediaDurabilityTest,
+                _ => photo_lab::validation::ValidationMode::ComprehensiveProtectionTest,
+            };
+            let cfg = photo_lab::validation::ValidationConfig {
+                mode: Some(val_mode),
+                face_model_path: face_model,
+                clip_model_path: clip_model,
+                clip_manifest_path: clip_manifest,
+                original_bytes: Some(a.bytes.len() as u64),
+                candidate_bytes: Some(b.bytes.len() as u64),
+            };
+            let res = photo_lab::validation::run_validation(&a.pixels, &b.pixels, &cfg)?;
+            if let Some(rp) = report {
+                save_new(&rp, res.to_json_pretty()?.as_bytes())?;
+            }
+            if let Some(mp) = markdown {
+                save_new(&mp, res.to_markdown().as_bytes())?;
+            }
+            println!("{}", res.to_markdown());
+        }
         Command::VerifyModel { model, manifest } => {
             use std::io::Read;
             let mut bytes = Vec::new();
@@ -517,7 +609,8 @@ fn main() -> Result<()> {
             output,
             epsilon,
             steps,
-        } => experimental_clip(&input, &model, &manifest, &output, epsilon, steps)?,
+            hardened,
+        } => experimental_clip(&input, &model, &manifest, &output, epsilon, steps, hardened)?,
         Command::Scan {
             input,
             profile,
@@ -1041,8 +1134,9 @@ fn experimental_clip(
     output: &Path,
     epsilon: u8,
     steps: u32,
+    hardened: bool,
 ) -> Result<()> {
-    use photo_engine::{Objective, Settings, WeightedObjective};
+    use photo_engine::{HardenedSettings, Objective, Settings, WeightedObjective};
     use std::io::Read;
     use std::sync::atomic::AtomicBool;
     let settings = Settings {
@@ -1097,23 +1191,57 @@ fn experimental_clip(
         .map(|v| f32::from(*v) / 255.)
         .collect();
     let energy_before = objective.feature_energy(&original)?;
-    let result = photo_engine::optimize(
-        &original,
-        &[WeightedObjective {
-            objective: &objective,
-            weight: 1.,
-        }],
-        settings,
-        &AtomicBool::new(false),
-    )?;
+    let (result, obj_name) = if hardened {
+        let w = photo.pixels.width() as usize;
+        let h = photo.pixels.height() as usize;
+        let cos_obj = photo_engine::clip::ClipCosineObjective::new(objective, &original, true)?;
+        let freq_obj =
+            photo_engine::frequency::FrequencyBandObjective::new(original.clone(), w, h)?;
+        let h_settings = HardenedSettings {
+            base: settings,
+            ..HardenedSettings::default()
+        };
+        let res = photo_engine::optimize_hardened(
+            &original,
+            w,
+            h,
+            &[
+                WeightedObjective {
+                    objective: &cos_obj,
+                    weight: 0.85,
+                },
+                WeightedObjective {
+                    objective: &freq_obj,
+                    weight: 0.15,
+                },
+            ],
+            h_settings,
+            None,
+            &AtomicBool::new(false),
+        )?;
+        let cos_after = cos_obj.clip().cosine_similarity(&original, &res.pixels)?;
+        eprintln!("Hardened CLIP cosine similarity after optimization: {cos_after:.4}");
+        let name = cos_obj.name().to_string();
+        (res, name)
+    } else {
+        let name = objective.name().to_string();
+        let res = photo_engine::optimize(
+            &original,
+            &[WeightedObjective {
+                objective: &objective,
+                weight: 1.,
+            }],
+            settings,
+            &AtomicBool::new(false),
+        )?;
+        (res, name)
+    };
     // Quantize within the integer pixel budget and measure the actual exported pixels.
     let rgb: Vec<u8> = result
         .pixels
         .iter()
         .map(|v| (v * 255.).round().clamp(0., 255.) as u8)
         .collect();
-    let actual: Vec<f32> = rgb.iter().map(|v| f32::from(*v) / 255.).collect();
-    let energy_after = objective.feature_energy(&actual)?;
     let out = image::DynamicImage::ImageRgb8(
         image::RgbImage::from_raw(photo.pixels.width(), photo.pixels.height(), rgb)
             .context("Output shape")?,
@@ -1124,14 +1252,14 @@ fn experimental_clip(
         q.max_channel_delta <= epsilon,
         "Quantized output exceeded perturbation budget"
     );
-    let report = serde_json::json!({"schema_version":1,"operation":"experimental CLIP feature suppression","objective":objective.name(),"settings":settings,"model":verified,"source_hash":photo.fingerprint,"output_hash":photo_core::fingerprint(&bytes),"quality":q,"feature_energy_before":energy_before,"feature_energy_after":energy_after,"loss_trace":result.trace,"ai_efficacy":"not evaluated","warnings":["Encoder feature change does not demonstrate resistance to downstream AI editing, training, recognition, or face swapping","Bilinear resize differs from canonical CLIP bicubic center crop preprocessing","Not a reproduction of any audited research defense"]});
+    let report = serde_json::json!({"schema_version":2,"operation":"experimental CLIP protection","hardened":hardened,"objective":obj_name,"settings":settings,"model":verified,"source_hash":photo.fingerprint,"output_hash":photo_core::fingerprint(&bytes),"quality":q,"feature_energy_before":energy_before,"loss_trace":result.trace,"ai_efficacy":"not evaluated","warnings":["Encoder feature change does not demonstrate resistance to downstream AI editing, training, recognition, or face swapping","Bilinear resize differs from canonical CLIP bicubic center crop preprocessing","Not a reproduction of any audited research defense"]});
     save_new(output, &bytes)?;
     save_new(
         &output.with_extension("png.json"),
         &serde_json::to_vec_pretty(&report)?,
     )?;
     println!(
-        "Experimental output saved. CLIP feature energy: {energy_before:.6} -> {energy_after:.6}. AI efficacy: not evaluated."
+        "Experimental output saved (hardened={hardened}). Baseline feature energy: {energy_before:.6}. AI efficacy: not evaluated."
     );
     Ok(())
 }

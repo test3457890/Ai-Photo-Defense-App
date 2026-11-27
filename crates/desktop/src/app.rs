@@ -482,6 +482,10 @@ pub enum Message {
     Verbosity(Level),
     Lab,
     LabDone(Result<photo_lab::Report, String>),
+    RunValidation(photo_lab::validation::ValidationMode),
+    ValidationDone(Result<Box<photo_lab::validation::ValidationSuiteReport>, String>),
+    ExportValidationReport(bool),
+    ValidationReportSaved(Result<PathBuf, String>),
     Forensics,
     ForensicsDone(Result<Box<photo_privacy::forensics::ForensicReport>, String>),
     Cache(bool),
@@ -596,6 +600,7 @@ pub struct App {
     pub code_lookup: String,
     pub report_preview: Option<String>,
     pub lab: Option<photo_lab::Report>,
+    pub validation_report: Option<Box<photo_lab::validation::ValidationSuiteReport>>,
     pub forensics: Option<Box<photo_privacy::forensics::ForensicReport>>,
     pub perf: Perf,
     pub sys: Option<sysinfo::System>,
@@ -1329,6 +1334,7 @@ impl App {
             code_lookup: String::new(),
             report_preview: None,
             lab: None,
+            validation_report: None,
             forensics: None,
             perf: Perf {
                 cores: std::thread::available_parallelism()
@@ -2794,6 +2800,91 @@ impl App {
                     Err(e) => self.note(e),
                 }
             }
+            Message::RunValidation(mode) => {
+                let Some(e) = self.current() else {
+                    self.note("Select a photograph first.");
+                    return Task::none();
+                };
+                let (orig_path, cand_path) = match &e.export {
+                    Some(ExportState::Done { path, .. }) => (e.path.clone(), path.clone()),
+                    _ => (e.path.clone(), e.path.clone()),
+                };
+                let face_model = self.face_model_path.clone();
+                self.busy = Some(format!("Running {}", mode.label()));
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let a = photo_core::load(&orig_path).map_err(|e| e.to_string())?;
+                            let b = photo_core::load(&cand_path).map_err(|e| e.to_string())?;
+                            let cfg = photo_lab::validation::ValidationConfig {
+                                mode: Some(mode),
+                                face_model_path: face_model,
+                                clip_model_path: None,
+                                clip_manifest_path: None,
+                                original_bytes: Some(a.bytes.len() as u64),
+                                candidate_bytes: Some(b.bytes.len() as u64),
+                            };
+                            photo_lab::validation::run_validation(&a.pixels, &b.pixels, &cfg)
+                                .map(Box::new)
+                                .map_err(|e| e.to_string())
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    Message::ValidationDone,
+                );
+            }
+            Message::ValidationDone(r) => {
+                self.busy = None;
+                match r {
+                    Ok(rep) => {
+                        self.note(format!("Validation complete: {}", rep.mode.label()));
+                        self.validation_report = Some(rep);
+                    }
+                    Err(e) => self.note(e),
+                }
+            }
+            Message::ExportValidationReport(markdown) => {
+                let Some(rep) = &self.validation_report else {
+                    return Task::none();
+                };
+                let content = if markdown {
+                    rep.to_markdown().into_bytes()
+                } else {
+                    match rep.to_json_pretty() {
+                        Ok(j) => j.into_bytes(),
+                        Err(e) => {
+                            self.note(e.to_string());
+                            return Task::none();
+                        }
+                    }
+                };
+                let default_name = if markdown {
+                    "validation-report.md"
+                } else {
+                    "validation-report.json"
+                };
+                return Task::perform(
+                    async move {
+                        let Some(file) = rfd::AsyncFileDialog::new()
+                            .set_file_name(default_name)
+                            .save_file()
+                            .await
+                        else {
+                            return Err("Cancelled".into());
+                        };
+                        let path = file.path().to_path_buf();
+                        photo_core::save_new(&path, &content).map_err(|e| e.to_string())?;
+                        Ok(path)
+                    },
+                    Message::ValidationReportSaved,
+                );
+            }
+            Message::ValidationReportSaved(r) => match r {
+                Ok(p) => self.note(format!("Saved validation report to {}", p.display())),
+                Err(e) if e != "Cancelled" => self.note(e),
+                Err(_) => {}
+            },
             Message::Forensics => {
                 let Some(e) = self.current() else {
                     return Task::none();
