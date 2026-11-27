@@ -321,6 +321,14 @@ pub struct MediaEntry {
     pub report: Option<String>,
     pub comparison: Option<photo_media::audio::Comparison>,
     pub out_lufs: Option<f64>,
+    pub video_preview: Option<image::Handle>,
+    pub video_time_s: f64,
+    pub video_duration_s: f64,
+    pub video_playing: bool,
+    pub video_rect: String,
+    pub video_from: String,
+    pub video_to: String,
+    pub video_blur: bool,
 }
 impl MediaEntry {
     pub fn kind(&self) -> photo_media::MediaKind {
@@ -339,6 +347,8 @@ pub struct MediaLoad {
     analysis: Option<photo_media::audio::Analysis>,
     wave: Option<image::Handle>,
     spectro: Option<image::Handle>,
+    video_preview: Option<image::Handle>,
+    video_duration_s: f64,
     error: Option<String>,
 }
 impl std::fmt::Debug for MediaLoad {
@@ -497,6 +507,15 @@ pub enum Message {
     ),
     Play(usize, bool),
     PlayReady(Result<Pcm, String>, f32),
+    VideoScrub(f64),
+    VideoFrameReady(usize, Result<(f64, u32, u32, Vec<u8>), String>),
+    VideoTogglePlay,
+    VideoTick,
+    VideoRect(String),
+    VideoFrom(String),
+    VideoTo(String),
+    VideoBlur(bool),
+    VideoRedact,
     StopAudio,
     ChooseC2paCert,
     C2paCertChosen(Option<PathBuf>),
@@ -826,6 +845,8 @@ fn load_media(path: &Path) -> MediaLoad {
         analysis: None,
         wave: None,
         spectro: None,
+        video_preview: None,
+        video_duration_s: 0.0,
         error: None,
     };
     let r = (|| -> anyhow::Result<()> {
@@ -870,6 +891,20 @@ fn load_media(path: &Path) -> MediaLoad {
                 128,
             )));
             l.analysis = Some(a);
+        }
+        #[cfg(feature = "video")]
+        if det.kind == photo_media::MediaKind::Video
+            && matches!(det.container, "MP4" | "MOV")
+            && let Ok(summary) = photo_media::video::probe_video(path)
+        {
+            l.video_duration_s = summary.duration_s;
+            if let Ok(frame) = photo_media::video::decode_frame_at(path, 0.0) {
+                l.video_preview = Some(image::Handle::from_rgba(
+                    frame.width,
+                    frame.height,
+                    frame.rgba,
+                ));
+            }
         }
         Ok(())
     })();
@@ -945,6 +980,75 @@ fn protect_voice_media(
     anyhow::bail!(
         "Built without the `voice-protect` feature; rebuild with `--features voice-protect`."
     )
+}
+
+#[cfg(feature = "video")]
+fn decode_video_preview(path: &Path, target_s: f64) -> Result<(f64, u32, u32, Vec<u8>), String> {
+    let f = photo_media::video::decode_frame_at(path, target_s).map_err(|e| format!("{e:#}"))?;
+    Ok((f.pts_s, f.width, f.height, f.rgba))
+}
+
+#[cfg(not(feature = "video"))]
+fn decode_video_preview(_path: &Path, _target_s: f64) -> Result<(f64, u32, u32, Vec<u8>), String> {
+    Err("Built without the `video` feature".into())
+}
+
+#[cfg(feature = "video")]
+fn redact_video_media(
+    path: &Path,
+    out_dir: &Path,
+    rect_str: &str,
+    from_str: &str,
+    to_str: &str,
+    blur: bool,
+) -> anyhow::Result<(
+    PathBuf,
+    String,
+    Option<photo_media::audio::Comparison>,
+    Option<f64>,
+)> {
+    let parts: Vec<u32> = rect_str
+        .split(',')
+        .map(|s| s.trim().parse::<u32>())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| anyhow::anyhow!("Rect must be x,y,w,h"))?;
+    anyhow::ensure!(parts.len() == 4, "Rect must be x,y,w,h");
+    let rect = photo_media::video::RedactRect {
+        x: parts[0],
+        y: parts[1],
+        width: parts[2],
+        height: parts[3],
+        from_s: from_str
+            .trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid from_s"))?,
+        to_s: to_str
+            .trim()
+            .parse()
+            .map_err(|_| anyhow::anyhow!("Invalid to_s"))?,
+        blur,
+    };
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("video");
+    let out = unique_out(out_dir, &format!("{stem}-redacted"), "mp4");
+    let r = photo_media::video::redact_mp4(path, &out, &[rect])?;
+    Ok((out, serde_json::to_string_pretty(&r)?, None, None))
+}
+
+#[cfg(not(feature = "video"))]
+fn redact_video_media(
+    _path: &Path,
+    _out_dir: &Path,
+    _rect_str: &str,
+    _from_str: &str,
+    _to_str: &str,
+    _blur: bool,
+) -> anyhow::Result<(
+    PathBuf,
+    String,
+    Option<photo_media::audio::Comparison>,
+    Option<f64>,
+)> {
+    anyhow::bail!("Built without the `video` feature; rebuild with `--features video`.")
 }
 
 /// Exports a media file through the matching verified path. Never overwrites.
@@ -1655,6 +1759,14 @@ impl App {
                             report: None,
                             comparison: None,
                             out_lufs: None,
+                            video_preview: None,
+                            video_time_s: 0.0,
+                            video_duration_s: 0.0,
+                            video_playing: false,
+                            video_rect: "16,16,64,64".into(),
+                            video_from: "0.0".into(),
+                            video_to: "1.0".into(),
+                            video_blur: false,
                         });
                         Task::perform(
                             async move {
@@ -2738,6 +2850,8 @@ impl App {
                     m.analysis = l.analysis;
                     m.wave = l.wave;
                     m.spectro = l.spectro;
+                    m.video_preview = l.video_preview;
+                    m.video_duration_s = l.video_duration_s;
                 }
                 if self.selected_media.is_none() && !self.media.is_empty() {
                     self.selected_media = Some(0);
@@ -2913,6 +3027,124 @@ impl App {
                     s.stop();
                 }
                 self.playing = None;
+            }
+            Message::VideoScrub(t) => {
+                if let Some(i) = self.selected_media
+                    && let Some(m) = self.media.get_mut(i)
+                {
+                    m.video_time_s = t.clamp(0.0, m.video_duration_s.max(0.0));
+                    let path = m.path.clone();
+                    return Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || decode_video_preview(&path, t))
+                                .await
+                                .unwrap_or_else(|e| Err(e.to_string()))
+                        },
+                        move |r| Message::VideoFrameReady(i, r),
+                    );
+                }
+            }
+            Message::VideoFrameReady(i, r) => {
+                if let Some(m) = self.media.get_mut(i) {
+                    match r {
+                        Ok((pts, w, h, rgba)) => {
+                            m.video_time_s = pts;
+                            m.video_preview = Some(image::Handle::from_rgba(w, h, rgba));
+                        }
+                        Err(e) => self.note(format!("Video preview: {e}")),
+                    }
+                }
+            }
+            Message::VideoTogglePlay => {
+                if let Some(i) = self.selected_media
+                    && let Some(m) = self.media.get_mut(i)
+                {
+                    m.video_playing = !m.video_playing;
+                    if m.video_playing && m.video_time_s >= m.video_duration_s {
+                        m.video_time_s = 0.0;
+                    }
+                }
+            }
+            Message::VideoTick => {
+                if let Some(i) = self.selected_media
+                    && let Some(m) = self.media.get_mut(i)
+                    && m.video_playing
+                {
+                    let next = m.video_time_s + 1.0 / 30.0;
+                    if next >= m.video_duration_s {
+                        m.video_playing = false;
+                        m.video_time_s = m.video_duration_s;
+                    } else {
+                        m.video_time_s = next;
+                        let path = m.path.clone();
+                        return Task::perform(
+                            async move {
+                                tokio::task::spawn_blocking(move || {
+                                    decode_video_preview(&path, next)
+                                })
+                                .await
+                                .unwrap_or_else(|e| Err(e.to_string()))
+                            },
+                            move |r| Message::VideoFrameReady(i, r),
+                        );
+                    }
+                }
+            }
+            Message::VideoRect(s) => {
+                if let Some(i) = self.selected_media
+                    && let Some(m) = self.media.get_mut(i)
+                {
+                    m.video_rect = s;
+                }
+            }
+            Message::VideoFrom(s) => {
+                if let Some(i) = self.selected_media
+                    && let Some(m) = self.media.get_mut(i)
+                {
+                    m.video_from = s;
+                }
+            }
+            Message::VideoTo(s) => {
+                if let Some(i) = self.selected_media
+                    && let Some(m) = self.media.get_mut(i)
+                {
+                    m.video_to = s;
+                }
+            }
+            Message::VideoBlur(b) => {
+                if let Some(i) = self.selected_media
+                    && let Some(m) = self.media.get_mut(i)
+                {
+                    m.video_blur = b;
+                }
+            }
+            Message::VideoRedact => {
+                let Some(i) = self.selected_media else {
+                    return Task::none();
+                };
+                let dir = PathBuf::from(self.output_dir.trim());
+                if self.output_dir.trim().is_empty() || !dir.is_dir() {
+                    self.note("Choose an existing output folder first.");
+                    return self.update(Message::BrowseOutput);
+                }
+                let m = &mut self.media[i];
+                let path = m.path.clone();
+                let rect_str = m.video_rect.clone();
+                let from_str = m.video_from.clone();
+                let to_str = m.video_to.clone();
+                let blur = m.video_blur;
+                m.status = "Redacting video".into();
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            redact_video_media(&path, &dir, &rect_str, &from_str, &to_str, blur)
+                                .map_err(|e| format!("{e:#}"))
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    move |r| Message::MediaExported(i, r),
+                );
             }
             Message::ChooseVoiceModelFolder => {
                 return Task::perform(
@@ -3434,6 +3666,11 @@ impl App {
         ];
         if self.mode == Mode::Technical {
             subs.push(iced::time::every(Duration::from_secs(2)).map(|_| Message::Tick));
+        }
+        if let Some(i) = self.selected_media
+            && self.media.get(i).is_some_and(|m| m.video_playing)
+        {
+            subs.push(iced::time::every(Duration::from_millis(33)).map(|_| Message::VideoTick));
         }
         Subscription::batch(subs)
     }

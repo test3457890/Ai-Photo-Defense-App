@@ -271,12 +271,12 @@ Specification: [PART5_SPECIFICATION.md](PART5_SPECIFICATION.md) (received cut of
 | Diagnostics, Performance, Forensics, Format Inspection pages | Implemented and independently tested | Windows GUI screenshots |
 | Audio decode/analysis/redaction/export, A/B playback | Implemented and independently tested | media tests, GUI run, CLI check of outputs |
 | AIFF, CAF, MP1/MP2, ADPCM decode | Implemented but insufficiently tested | AIFF tested; CAF/MP2/ADPCM not tested with real files |
-| Opus decode | Partially implemented (not merged) | branch `ag/opus-wma`, same provenance issue as video |
+| Opus decode | Implemented but insufficiently tested (optional `opus`, not in installers) | FilmCraft `craft-audio`; round-trip test with craft's Opus encoder; no real .opus file tested |
 | WMA, AC-3, AMR decode | Blocked by technical limitations | no licence-clean Rust decoder found |
 | MP4-family metadata removal | Implemented and independently tested | 1,500 mutations, GUI + CLI verification (synthetic files only) |
 | Matroska metadata removal | Not implemented | inspection only |
 | Subtitle Privacy Scan and redaction | Implemented and independently tested | tests, GUI export, CLI check |
-| Video frame decode, preview, redaction, re-encode, tracking | Partially implemented (not merged) | working branches `ag/video-frames`, `ag/video-tracking-verify` use `filmcraft-*` crates of unverified provenance; to be ported to official `storytold/craft-libs` |
+| Video frame decode, preview, redaction, re-encode, tracking (H.264 MP4/MOV) | Implemented but insufficiently tested (optional `video`, not in installers) | FilmCraft `craft-video` pinned by commit; synthetic 320x240 clip: 90/90 frames redacted and re-encoded, A/V drift 0, per-frame verification 90 checked / 0 failed; desktop scrub and play checked; no real phone clip tested |
 | Video adversarial protection | Not supported by sufficient research | no licence-compatible validated method with weights; FaceShield is research-only |
 | Voice-cloning protection | Experimental (optional `voice-protect`, not in installers) | Rust ECAPA-TDNN objective; parity with SpeechBrain and protection effect not measured (PyTorch unavailable for conversion on the test machine) |
 | Automatic spoken-content detection | Implemented but insufficiently tested (optional `stt`) | Whisper via candle; accuracy not measured (no weights on the test machine); text rules match written forms only |

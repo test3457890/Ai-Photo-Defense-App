@@ -12,7 +12,9 @@ Integration of Antigravity's Part 5 branches, reviewed and verified by Claude. H
 - Unsigned installers workflow (MSI, .deb, AppImage, .dmg, checksums, SBOM) with pinned tool versions and a checksum-verified appimagetool; GUI smoke tests on Linux and macOS in CI; original logo and app icons.
 - Desktop shows optional-feature controls only when the feature is built in.
 
-Not merged: H.264 video frames, video tracking and Opus decoding. They depend on `filmcraft-*` crates published by an account with no verifiable link to the FilmCraft project; they will be ported to the official `storytold/craft-libs` before merging.
+- H.264 video (`video`, experimental, not in installers): MP4/MOV frame decode, scrub/play preview, time-ranged rectangle redaction (opaque or blur), forward/backward object tracking with scene-cut stop, re-encode with original audio copied, and an independent per-frame verification of the export. CLI `video-redact`, `video-track`.
+- Opus decoding (`opus`, experimental, not in installers) in Ogg/WebM through the same analysis and WAV export path. WMA, AC-3 and AMR remain unsupported.
+- Video and Opus use FilmCraft's own codec libraries (`storytold/craft-libs`, MIT OR Apache-2.0) pinned to the commit FilmCraft itself uses. Antigravity's first versions used look-alike `filmcraft-*`/`effectcraft-*` crates from an unrelated crates.io publisher; those were replaced before merging.
 
 ## 0.5.0 release candidate (Part 5), 2026-11-26
 

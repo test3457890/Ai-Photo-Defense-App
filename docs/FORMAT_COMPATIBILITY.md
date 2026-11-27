@@ -38,6 +38,8 @@ This build works on the container only.
 | Matroska (MKV), WebM | Yes | Yes | Yes: title, date, writing/muxing application, tags, attachments, chapters | No | inspection only; removal is not implemented and the app says so |
 | AVI, MPEG-PS (MPG/MPEG), MPEG-TS, M2TS / MTS, MXF, FLV, ASF / WMV, Ogg (Theora) | Detect | No | No | No | named only |
 
+**H.264 in MP4/MOV (optional `video` feature, not in installers):** frame decode, preview, playback, time-ranged redaction, object tracking and re-encode with FilmCraft's `craft-video`, with per-frame verification of the export. Tested on synthetic clips only. Other codecs below are identification only.
+
 Codecs are identified from the sample description (`stsd`) or Matroska `CodecID`: H.264/AVC,
 H.265/HEVC, AV1, VP8, VP9, MPEG-4 Part 2, MPEG-2, ProRes variants, DNxHD/HR, Motion JPEG, FFV1,
 Theora, AAC, Opus, MP3, FLAC, ALAC, AC-3, E-AC-3, PCM. **Identification only**: none of them is
@@ -63,8 +65,8 @@ streamed, so long files do not need to fit in memory.
 | CAF | Yes | Yes (new in 0.5; codec permitting) | Yes | Yes, to WAV | not tested with a real CAF file |
 | MP1 / MP2, IMA/MS ADPCM (in WAV/AIFF/CAF) | Yes | Yes (new in 0.5) | Yes | Yes, to WAV | not tested with real files |
 | W64 | Detect | No | No | No | no demuxer |
-| Opus | Detect | **No** | No | No | no Opus decoder in Symphonia 0.5; a pure-Rust Opus decoder has not been reviewed |
-| WMA, AC-3, E-AC-3, AMR | Detect | No | No | No | |
+| Opus (in Ogg, WebM/MKV) | Yes | Yes (optional `opus` feature, FilmCraft `craft-audio`; not in installers) | Yes | Yes, to WAV | Pure-Rust RFC 6716/8251 decoder (`MIT OR Apache-2.0`) |
+| WMA, AC-3, E-AC-3, AMR | Detect | No | No | No | WMA: no mature, complete Rust ASF+WMA decoder (`oxideav-wma` 0.0.5 is MIT v1/v2 baseline only with no ASF demuxer) |
 
 Export writes a new WAV: 16-bit PCM when the source is 16-bit integer, otherwise 32-bit float.
 Channels and sample rate are preserved; stereo is never folded to mono. No encoded (MP3, AAC,

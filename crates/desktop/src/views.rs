@@ -2445,6 +2445,63 @@ fn media_panel<'a>(app: &'a App, m: &'a MediaEntry, compact: bool) -> El<'a> {
                 .style(theme::section_header),
         );
     }
+    if info.kind == MediaKind::Video {
+        c = c.push(small("VIDEO PREVIEW & REDACTION (H.264 MP4/MOV)"));
+        if let Some(h) = &m.video_preview {
+            c = c.push(
+                container(image(h.clone()).content_fit(ContentFit::Contain))
+                    .max_height(240)
+                    .width(Length::Fill)
+                    .style(theme::section_header),
+            );
+        }
+        let max_s = m.video_duration_s.max(0.01);
+        c = c.push(
+            row![
+                btn(
+                    if m.video_playing { "Pause" } else { "Play" },
+                    Some(Message::VideoTogglePlay)
+                ),
+                slider(0.0..=max_s, m.video_time_s, Message::VideoScrub)
+                    .step(0.033)
+                    .width(Length::Fill),
+                small(format!(
+                    "{:.2} / {:.2} s",
+                    m.video_time_s, m.video_duration_s
+                )),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        );
+        c = c.push(
+            row![
+                small("Rect x,y,w,h:"),
+                text_input("16,16,64,64", &m.video_rect)
+                    .on_input(Message::VideoRect)
+                    .size(FONT)
+                    .width(120),
+                small("From (s):"),
+                text_input("0.0", &m.video_from)
+                    .on_input(Message::VideoFrom)
+                    .size(FONT)
+                    .width(60),
+                small("To (s):"),
+                text_input("1.0", &m.video_to)
+                    .on_input(Message::VideoTo)
+                    .size(FONT)
+                    .width(60),
+                checkbox("Blur", m.video_blur)
+                    .on_toggle(Message::VideoBlur)
+                    .size(14),
+                btn(
+                    "Redact & re-encode MP4",
+                    idle.then_some(Message::VideoRedact)
+                ),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        );
+    }
     if info.kind == MediaKind::Subtitle {
         c = c.push(small("Export writes a copy with every cue that contains a Privacy Scan finding replaced by [redacted]."));
     }

@@ -21,6 +21,8 @@ jobs:
       - name: Linux audio headers (ALSA, used only for local A/B playback)
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev pkg-config
       - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Default-feature build of every target (examples, tests)
+        run: cargo check --locked --workspace --all-targets
   platform:
     strategy:
       fail-fast: false

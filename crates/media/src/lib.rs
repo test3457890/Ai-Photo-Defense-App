@@ -23,6 +23,10 @@ pub mod protect;
 pub mod stt;
 pub mod subtitles;
 pub mod temporal;
+#[cfg(feature = "video")]
+pub mod video;
+#[cfg(feature = "video")]
+pub mod video_track;
 pub mod wake_word;
 
 pub use detect::{MediaKind, detect};

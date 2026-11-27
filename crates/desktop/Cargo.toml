@@ -32,6 +32,7 @@ default = []
 voice-protect = ["photo-media/voice-protect"]
 faces = ["photo-privacy/faces"]
 c2pa = ["photo-privacy/c2pa"]
+video = ["photo-media/video"]
 
 [package.metadata.deb]
 maintainer = "AI Photo Defense Contributors"

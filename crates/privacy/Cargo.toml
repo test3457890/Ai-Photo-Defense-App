@@ -31,3 +31,7 @@ c2pa = ["dep:c2pa"]
 tempfile.workspace = true
 rcgen = "0.14"
 rxing = { version = "0.9.4", default-features = false, features = ["encoders", "decoders", "multi_barcode_readers", "full_barcode_format_support", "encoding_rs"] }
+
+[[example]]
+name = "detect_faces"
+required-features = ["faces"]
