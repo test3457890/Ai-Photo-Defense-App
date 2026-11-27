@@ -4172,53 +4172,22 @@ fn check_github_release() -> Result<UpdateInfo, String> {
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         if stderr.contains("404") {
-            // No published release tag yet — query latest commit on main so user sees real GitHub status.
-            let c_url =
-                "https://api.github.com/repos/test3457890/Ai-Photo-Defense-App/commits/main";
-            if let Ok(c_out) = std::process::Command::new("curl")
-                .args(["-fsSL", "--max-time", "8", "-A", &ua, c_url])
-                .output()
-                && c_out.status.success()
-                && let Ok(c_val) = serde_json::from_slice::<serde_json::Value>(&c_out.stdout)
-            {
-                let sha: String = c_val
-                    .get("sha")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown")
-                    .chars()
-                    .take(7)
-                    .collect();
-                let msg: String = c_val
-                    .pointer("/commit/message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .chars()
-                    .take(120)
-                    .collect();
-                return Ok(UpdateInfo {
-                    current_version: VERSION.to_string(),
-                    latest_version: format!("main@{sha}"),
-                    update_available: false,
-                    release_url: "https://github.com/test3457890/Ai-Photo-Defense-App/actions"
-                        .to_string(),
-                    notes: format!(
-                        "No tagged GitHub Release published yet. Latest commit on main: {sha} — {msg}"
-                    ),
-                    asset_name: None,
-                    asset_url: None,
-                });
-            }
             return Err(format!(
-                "No published GitHub release yet (running development build {VERSION})."
+                "No official public release is published yet (running local build {VERSION}). Development pushes to main are not pushed as updates."
             ));
         }
         return Err(format!("GitHub check unavailable ({})", stderr.trim()));
     }
     let val: serde_json::Value =
         serde_json::from_slice(&out.stdout).map_err(|e| format!("Invalid JSON response: {e}"))?;
+    if val.get("draft").and_then(|v| v.as_bool()).unwrap_or(false)
+        || val
+            .get("prerelease")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    {
+        return Err("Latest GitHub release is a draft or pre-release; skipping.".into());
+    }
     let tag = val
         .get("tag_name")
         .and_then(|v| v.as_str())

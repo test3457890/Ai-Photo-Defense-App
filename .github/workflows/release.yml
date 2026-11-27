@@ -141,3 +141,24 @@ jobs:
           name: installer-macos-${{ matrix.arch }}-unsigned
           path: dist/
           retention-days: 14
+
+  publish-release:
+    needs: [sbom, windows-msi, linux-packages, macos-dmg]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+      - name: Collect installers and publish tagged GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p upload
+          find release-artifacts -type f \( -name '*.msi' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.dmg' -o -name 'sbom.cdx.json' \) -exec cp {} upload/ \;
+          (cd upload && sha256sum * > SHA256SUMS.txt)
+          gh release create "${{ github.ref_name }}" upload/* \
+            --title "AI Photo Defense ${{ github.ref_name }}" \
+            --generate-notes
