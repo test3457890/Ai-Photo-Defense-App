@@ -37,6 +37,8 @@ pub struct Settings {
     pub format: String,
     pub quality: u8,
     pub mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_model_dir: Option<String>,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -45,6 +47,7 @@ impl Default for Settings {
             format: "png".into(),
             quality: 92,
             mode: "Professional".into(),
+            voice_model_dir: None,
         }
     }
 }

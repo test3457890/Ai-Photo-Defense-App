@@ -14,6 +14,8 @@ use serde::Serialize;
 
 pub mod audio;
 pub mod detect;
+#[cfg(feature = "voice-protect")]
+pub mod ecapa;
 pub mod mkv;
 pub mod mp4;
 pub mod protect;

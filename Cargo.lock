@@ -3957,6 +3957,7 @@ dependencies = [
  "hound",
  "image 0.25.10",
  "photo-log",
+ "photo-models",
  "photo-privacy",
  "rustfft",
  "serde",

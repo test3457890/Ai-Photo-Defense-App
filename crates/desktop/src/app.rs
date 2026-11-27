@@ -497,6 +497,9 @@ pub enum Message {
     Play(usize, bool),
     PlayReady(Result<Pcm, String>, f32),
     StopAudio,
+    ChooseVoiceModelFolder,
+    VoiceModelFolderChosen(Option<PathBuf>),
+    ProtectVoice,
     PaneResized(pane_grid::ResizeEvent),
     PaneDragged(pane_grid::DragEvent),
     PaneMaximize(Pane),
@@ -574,6 +577,7 @@ pub struct App {
     pub seg_end: String,
     pub player: Option<Player>,
     pub playing: Option<(usize, bool)>,
+    pub voice_model_dir: Option<PathBuf>,
 }
 
 pub fn data_dir() -> PathBuf {
@@ -812,6 +816,50 @@ fn unique_out(dir: &Path, stem: &str, ext: &str) -> PathBuf {
         })
         .find(|p| !p.exists())
         .unwrap_or_else(|| dir.join(format!("{stem}-private-x.{ext}")))
+}
+
+#[cfg(feature = "voice-protect")]
+fn protect_voice_media(
+    path: &Path,
+    out_dir: &Path,
+    model_dir: &Path,
+) -> anyhow::Result<(
+    PathBuf,
+    String,
+    Option<photo_media::audio::Comparison>,
+    Option<f64>,
+)> {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("audio");
+    let out = unique_out(out_dir, &format!("{stem}-protected"), "wav");
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let r = photo_media::ecapa::protect_wav(
+        path,
+        &out,
+        model_dir,
+        photo_media::protect::Settings::default(),
+        &cancel,
+    )?;
+    let cmp = photo_media::audio::compare(path, &out).ok();
+    let lufs = photo_media::audio::analyze(&out)
+        .ok()
+        .and_then(|a| a.integrated_lufs);
+    Ok((out, serde_json::to_string_pretty(&r)?, cmp, lufs))
+}
+
+#[cfg(not(feature = "voice-protect"))]
+fn protect_voice_media(
+    _path: &Path,
+    _out_dir: &Path,
+    _model_dir: &Path,
+) -> anyhow::Result<(
+    PathBuf,
+    String,
+    Option<photo_media::audio::Comparison>,
+    Option<f64>,
+)> {
+    anyhow::bail!(
+        "Built without the `voice-protect` feature; rebuild with `--features voice-protect`."
+    )
 }
 
 /// Exports a media file through the matching verified path. Never overwrites.
@@ -1104,6 +1152,7 @@ impl App {
             seg_end: String::new(),
             player: None,
             playing: None,
+            voice_model_dir: None,
         };
         app.refresh_library();
         app
@@ -1326,6 +1375,10 @@ impl App {
                 format: self.format.extension().into(),
                 quality: self.quality,
                 mode: self.mode.to_string(),
+                voice_model_dir: self
+                    .voice_model_dir
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
             },
             ..Default::default()
         }
@@ -2752,6 +2805,49 @@ impl App {
                 }
                 self.playing = None;
             }
+            Message::ChooseVoiceModelFolder => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .pick_folder()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    Message::VoiceModelFolderChosen,
+                );
+            }
+            Message::VoiceModelFolderChosen(Some(dir)) => {
+                self.voice_model_dir = Some(dir);
+                self.dirty_project = true;
+            }
+            Message::VoiceModelFolderChosen(None) => {}
+            Message::ProtectVoice => {
+                let Some(i) = self.selected_media else {
+                    return Task::none();
+                };
+                let Some(model_dir) = self.voice_model_dir.clone() else {
+                    self.note("Choose a voice model folder in Technical > Model Library first.");
+                    return Task::none();
+                };
+                let dir = PathBuf::from(self.output_dir.trim());
+                if self.output_dir.trim().is_empty() || !dir.is_dir() {
+                    self.note("Choose an existing output folder first.");
+                    return self.update(Message::BrowseOutput);
+                }
+                let path = self.media[i].path.clone();
+                self.media[i].status = "Protecting voice".into();
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            protect_voice_media(&path, &dir, &model_dir)
+                                .map_err(|e| format!("{e:#}"))
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    move |r| Message::MediaExported(i, r),
+                );
+            }
             Message::PaneResized(e) => self.panes.resize(e.split, e.ratio),
             Message::PaneDragged(pane_grid::DragEvent::Dropped { pane, target }) => {
                 self.panes.drop(pane, target)
@@ -2804,6 +2900,7 @@ impl App {
         self.selected = None;
         self.profile = p.settings.profile.clone();
         self.quality = p.settings.quality;
+        self.voice_model_dir = p.settings.voice_model_dir.as_ref().map(PathBuf::from);
         self.pending_restore = Some(p);
         if missing > 0 {
             photo_log::warn(
