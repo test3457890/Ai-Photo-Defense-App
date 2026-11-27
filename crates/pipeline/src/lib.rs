@@ -146,6 +146,9 @@ pub fn pre_export_review(
     if edits.has_visual_only_concealment() {
         risks.push("Blur or pixelation is visual concealment only; use opaque redaction for sensitive content.".into());
     }
+    if edits.has_weak_concealment() {
+        risks.push("Weak blur (radius below 8) or small pixel blocks (below 12 px) can leave text readable or reconstructable; increase the strength or use opaque redaction.".into());
+    }
     risks
 }
 
@@ -270,6 +273,12 @@ pub fn verify(
     let visual_only_concealment = edits.has_visual_only_concealment();
     if visual_only_concealment {
         warnings.push("Blur or pixelation was used. These are visual concealment and can leave recoverable or inferable detail; use opaque redaction for sensitive information.".into());
+    }
+    if edits.has_weak_concealment() {
+        warnings.push(
+            "Weak blur or small pixel blocks were used; text under them may still be readable."
+                .into(),
+        );
     }
     if !redaction_geometry_verified {
         warnings.push("Geometry edits follow a redaction, so redaction regions could not be re-located for verification.".into());

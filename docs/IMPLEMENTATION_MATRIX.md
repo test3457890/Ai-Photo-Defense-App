@@ -248,3 +248,56 @@ Specification: [PART4_SPECIFICATION.md](PART4_SPECIFICATION.md) (verbatim). Stat
 | Cross-platform testing (34) | Incomplete | Windows 10 runtime; Linux/macOS compile in CI only |
 | Competitive benchmarking (35) | Blocked | no competing tools installed; no comparison claimed |
 | Releases (39) | Not done | PR opened for review; owner asked not to merge before review |
+
+## Part 5
+
+Specification: [PART5_SPECIFICATION.md](PART5_SPECIFICATION.md) (received cut off in section 8). Classification uses the Part 5 vocabulary. "Independently tested" means automated tests **and** a manual check in the real Windows 10 app or an independent CLI check of the output.
+
+### Master checklist, Parts 1 to 5 (summary by capability)
+
+| Capability | Classification | Evidence |
+|---|---|---|
+| Bounded image import (JPEG, PNG, WebP, TIFF, BMP, GIF), RAW embedded preview | Implemented and independently tested | core tests, mutation fuzz, GUI imports |
+| Metadata removal on export with re-open verification | Implemented and independently tested | pipeline tests, Part 2/3 GUI exports |
+| Non-destructive editing, colour, layers, masks, geometry | Implemented and independently tested | edit tests, Part 3 screenshots |
+| Opaque redaction | Implemented and independently tested | render-order test, export verification |
+| Blur / pixelation / mosaic | Implemented and independently tested | new recoverability test; weak settings now warned live and at export |
+| Privacy Scan: metadata, QR/barcodes, text rules | Implemented and independently tested | privacy tests, GUI scans |
+| Automatic face / person / object / document detection, OCR | Blocked by licensing | no licence-reviewed local model; every scan lists them as not examined |
+| Photo adversarial protection (CLIP PGD experiment) | Experimental | CLI only, computation verified, efficacy not measured; never shown as protection in the GUI |
+| Batch processing, review queue, duplicates | Implemented and independently tested | batch tests, CLI runs |
+| Media Manager catalog, projects, autosave, crash recovery, logging | Implemented and independently tested | catalog/project/log tests; forced-kill restart observed |
+| Diagnostics, Performance, Forensics, Format Inspection pages | Implemented and independently tested | Windows GUI screenshots |
+| Audio decode/analysis/redaction/export, A/B playback | Implemented and independently tested | media tests, GUI run, CLI check of outputs |
+| AIFF, CAF, MP1/MP2, ADPCM decode | Implemented but insufficiently tested | AIFF tested; CAF/MP2/ADPCM not tested with real files |
+| Opus, WMA, AC-3, AMR decode | Blocked by technical limitations | no reviewed pure-Rust decoder |
+| MP4-family metadata removal | Implemented and independently tested | 1,500 mutations, GUI + CLI verification (synthetic files only) |
+| Matroska metadata removal | Not implemented | inspection only |
+| Subtitle Privacy Scan and redaction | Implemented and independently tested | tests, GUI export, CLI check |
+| Video frame decode, preview, redaction, re-encode | Blocked by technical limitations | candidate decoder (FilmCraft) needs security and patent review |
+| Video adversarial protection | Not supported by sufficient research | no licence-compatible validated method with weights; FaceShield is research-only |
+| Voice-cloning protection | Not implemented (engine experimental) | engine refuses without objective; licence-compatible encoders now identified (SpeechBrain ECAPA, Resemblyzer: Apache-2.0) |
+| Automatic spoken-content detection | Not implemented | Whisper (MIT) identified; candle port and validation pending |
+| Invisible ownership watermark | Implemented and independently tested (CLI) | tests incl. JPEG 70-90 survival; real photo check; not in GUI yet |
+| C2PA content credentials | Blocked by technical limitations | needs signing certificate |
+| Linux / macOS | Implemented but insufficiently tested | CI builds and runs all tests on Linux, macOS Intel, macOS Apple Silicon; no GUI runtime check |
+| Signed releases, installers, updater | Not implemented | no signing credentials; no updater (the app makes no network connections) |
+| Competitive benchmarks | Blocked by technical limitations | comparison tools not installed |
+
+### Section 4 sweep (incomplete functionality)
+
+| Search | Result |
+|---|---|
+| TODO / FIXME / `todo!` / `unimplemented!` in workspace code | none |
+| Placeholder / mock / simulated data outside tests | none: demo fixtures live in `examples/` and are labelled as fixtures |
+| Messages without a handler, buttons without an effect | none: every `Message` variant is handled; disabled buttons are disabled, not no-ops |
+| Unused dependencies | removed `serde_json` from `photo-models` |
+| Incorrect success messages | none found: exports report "verified" only after re-open checks; audio protection refuses with an error |
+| Fabricated protection scores | none: no protection percentage is computed or displayed |
+| Unsupported format claims | corrected: README and docs list exactly what decodes |
+
+### Bugs fixed in this part
+
+1. Text fields drew their text outside the box (owner's screenshots). Root cause: iced 0.13 only clips text-input text while a selection is active, and containers/scrollables without overflow create no clip layer. Fix: a small `Clip` widget that always draws its child in a clipped layer; every text field now uses it with the frame drawn outside the clip. Verified while typing and after leaving the field.
+2. Weak blur and pixelation were accepted without warning. Now flagged in the inspector, the pre-export review and the export report.
+3. AIFF was advertised as "detect only" although the decoder supports it once its feature is enabled; enabled with a test.

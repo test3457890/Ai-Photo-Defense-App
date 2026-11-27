@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0 release candidate (Part 5), 2026-11-26
+
+Refinement and validation pass over Parts 1 to 4. Fixed: text fields painted their text outside the box (a clip widget now confines every field). Added: live and export-time warnings for weak blur or pixelation, backed by a test showing small radii and blocks leave text structure; AIFF, CAF, MP1/MP2 and ADPCM audio decoding; an invisible key-based ownership watermark with CLI `watermark-embed` / `watermark-detect` (survives JPEG quality 70+, not resizing; provenance only, not AI protection). Removed an unused dependency. Research register extended with a licence check of 25 projects: SpeechBrain ECAPA and Resemblyzer (Apache-2.0) and Whisper (MIT) make voice protection and spoken-content detection licence-feasible; FaceShield is research-only and Glaze/Nightshade are closed. Master requirements checklist for Parts 1 to 5 in IMPLEMENTATION_MATRIX.md.
+
 ## 0.4.0 development preview (Part 4), 2026-11-26
 
 Multimedia privacy foundation, not a video editor. New `photo-media` crate: content-based format detection (40+ signatures, extension-mismatch warnings); MP4/MOV/3GP/M4A and Matroska/WebM structure and privacy-metadata inspection; lossless MP4-family metadata removal that rewrites chunk offsets and verifies every chunk; streamed audio decoding through Symphonia with loudness, true peak, clipping, silence, waveform and spectrogram; mute/bleep redaction with verified WAV export; original-vs-export comparison; SRT/WebVTT Privacy Scan and redaction; temporal flicker metrics; a psychoacoustically bounded audio protection engine that refuses to run without a validated model. Desktop: media in all three modes, loudness-matched A/B playback, Format Inspection page. CLI: `media-inspect`, `strip-video`, `audio-analyze`, `audio-compare`, `audio-export`, `audio-protect` (refuses), `subtitles`. Images: BMP and GIF import. Model manifests move to schema 2 (local use separate from redistribution).

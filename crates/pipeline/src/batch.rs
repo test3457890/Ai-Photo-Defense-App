@@ -27,9 +27,10 @@ pub struct CollectOptions {
     /// Also collect audio, video and subtitle files (desktop media workflow).
     pub include_media: bool,
 }
-pub const MEDIA_EXTENSIONS: [&str; 24] = [
+pub const MEDIA_EXTENSIONS: [&str; 28] = [
     "mp4", "m4v", "mov", "m4a", "3gp", "mkv", "webm", "avi", "mpg", "mpeg", "ts", "mts", "m2ts",
-    "wav", "flac", "mp3", "ogg", "opus", "aac", "aif", "aiff", "srt", "vtt", "gif",
+    "wav", "flac", "mp3", "ogg", "opus", "aac", "aif", "aiff", "aifc", "caf", "w64", "mp2", "srt",
+    "vtt", "gif",
 ];
 impl Default for CollectOptions {
     fn default() -> Self {

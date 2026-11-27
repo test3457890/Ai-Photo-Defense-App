@@ -41,16 +41,14 @@ fn sep<'a>() -> El<'a> {
         })
         .into()
 }
-/// iced 0.13 clips text-input text only while selecting, so a long value spills over
-/// neighbouring widgets. A scrollable with an invisible scrollbar draws its content in a
-/// clipped layer, which fixes the overflow.
-fn clip_input<'a>(input: iced::widget::TextInput<'a, Message>) -> El<'a> {
-    use iced::widget::scrollable::{Direction, Scrollbar};
-    scrollable(input)
-        .direction(Direction::Vertical(
-            Scrollbar::new().width(0).scroller_width(0).margin(0),
-        ))
-        .into()
+/// Text field with its frame drawn by a container and the text inside a clipped layer.
+/// iced 0.13 (tiny-skia) does not clip text-input text to the box once the field loses focus,
+/// so long values spilled over neighbouring widgets. Here the border belongs to the outer
+/// container and the text is confined to the inner area, so it can never cross the frame.
+fn field<'a>(input: iced::widget::TextInput<'a, Message>) -> iced::widget::Container<'a, Message> {
+    container(crate::clip::clip(input.padding(0).style(theme::input_bare)))
+        .padding([3, 6])
+        .style(theme::field_frame)
 }
 /// Shortens a path from the left so its most specific part stays visible.
 fn ellipsize_left(s: &str, max: usize) -> String {
@@ -702,7 +700,7 @@ fn library(app: &App) -> El<'_> {
         ]
         .spacing(4),
         row![
-            clip_input(
+            field(
                 text_input("Path to photo or folder", &app.input_path)
                     .on_input(Message::InputPath)
                     .on_submit(Message::ImportPath)
@@ -769,13 +767,13 @@ fn library(app: &App) -> El<'_> {
     if app.catalog.is_none() {
         col = col.push(small("Catalog unavailable (safe mode or database error)."));
     } else {
-        col = col.push(
+        col = col.push(field(
             text_input("Search name, camera, tag", &app.lib_search)
                 .on_input(Message::LibSearch)
                 .size(FONT)
                 .padding([3, 6])
                 .style(theme::input),
-        );
+        ));
         col = col.push(
             row![
                 small("Min rating"),
@@ -822,12 +820,14 @@ fn library(app: &App) -> El<'_> {
         if app.current().and_then(|e| e.catalog_id).is_some() {
             col = col.push(
                 row![
-                    text_input("Add tag to photo", &app.tag_input)
-                        .on_input(Message::TagInput)
-                        .on_submit(Message::ApplyTag)
-                        .size(FONT)
-                        .padding([3, 6])
-                        .style(theme::input),
+                    field(
+                        text_input("Add tag to photo", &app.tag_input)
+                            .on_input(Message::TagInput)
+                            .on_submit(Message::ApplyTag)
+                            .size(FONT)
+                            .padding([3, 6])
+                            .style(theme::input)
+                    ),
                     btn("Tag", Some(Message::ApplyTag))
                 ]
                 .spacing(4),
@@ -1423,6 +1423,9 @@ fn inspector(app: &App) -> El<'_> {
         if matches!(app.method, Method::Blur | Method::Pixelate | Method::Mosaic) {
             c = c.push(row![small("Strength").width(78), slider(2..=64, app.strength, Message::Strength).height(14), small(app.strength.to_string()).width(40)].spacing(6));
             c = c.push(small("Visual concealment can leave recoverable detail. Use opaque redaction for sensitive information."));
+            if app.method.concealment(app.strength).is_weak() {
+                c = c.push(container(small("This strength is weak: text underneath may stay readable. Use 8 or more for blur, 12 or more for blocks, or opaque redaction.")).padding(4).style(theme::warning_box));
+            }
         }
         c = c.push(row![small("Brush radius").width(78), slider(1.0..=200.0, app.brush_radius, Message::BrushRadius).height(14), small(format!("{:.0}", app.brush_radius)).width(40)].spacing(6));
         c = c.push(btn("Conceal selection  Enter", app.selection.is_some().then_some(Message::ConcealSelection)));
@@ -1724,7 +1727,7 @@ fn privacy_panel(app: &App) -> El<'_> {
 fn export_panel(app: &App) -> El<'_> {
     let idle = app.busy.is_none();
     let mut c = column![
-        row![clip_input(text_input("Output folder", &app.output_dir).on_input(Message::OutputDir).size(FONT).padding([3, 6]).style(theme::input)), btn("...", Some(Message::BrowseOutput))].spacing(4),
+        row![field(text_input("Output folder", &app.output_dir).on_input(Message::OutputDir).size(FONT).padding([3, 6]).style(theme::input)), btn("...", Some(Message::BrowseOutput))].spacing(4),
         row![pick_list(photo_core::ExportFormat::ALL, Some(app.format), Message::Format).text_size(FONT).padding([3, 6]), small(format!("JPEG quality {}", app.quality)), slider(40..=100, app.quality, Message::Quality).height(14)].spacing(6).align_y(Alignment::Center),
         checkbox("High-assurance review (block on unresolved findings)", app.high_assurance).on_toggle(Message::HighAssurance).size(13).text_size(FONT_SMALL),
         row![
@@ -1869,12 +1872,14 @@ fn diagnostics(app: &App) -> El<'_> {
         ))
         .text_size(FONT)
         .padding([3, 6]),
-        text_input("Search sanitized messages and codes", &app.log_search)
-            .on_input(Message::LogSearch)
-            .size(FONT)
-            .padding([3, 6])
-            .style(theme::input)
-            .width(260),
+        field(
+            text_input("Search sanitized messages and codes", &app.log_search)
+                .on_input(Message::LogSearch)
+                .size(FONT)
+                .padding([3, 6])
+                .style(theme::input)
+        )
+        .width(260),
         horizontal_space(),
         btn("Copy report", Some(Message::CopyReport)),
         toggle(
@@ -1950,12 +1955,14 @@ fn diagnostics(app: &App) -> El<'_> {
             mib(cfg.max_total_bytes)
         )),
         horizontal_space(),
-        text_input("Look up code (e.g. APD-3002)", &app.code_lookup)
-            .on_input(Message::CodeLookup)
-            .size(FONT)
-            .padding([2, 6])
-            .width(200)
-            .style(theme::input),
+        field(
+            text_input("Look up code (e.g. APD-3002)", &app.code_lookup)
+                .on_input(Message::CodeLookup)
+                .size(FONT)
+                .padding([2, 6])
+                .width(200)
+                .style(theme::input)
+        ),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -2390,18 +2397,22 @@ fn media_panel<'a>(app: &'a App, m: &'a MediaEntry, compact: bool) -> El<'a> {
         }
         seg = seg.push(
             row![
-                text_input("start", &app.seg_start)
-                    .on_input(Message::SegStart)
-                    .size(FONT)
-                    .width(70)
-                    .padding([3, 6])
-                    .style(theme::input),
-                text_input("end", &app.seg_end)
-                    .on_input(Message::SegEnd)
-                    .size(FONT)
-                    .width(70)
-                    .padding([3, 6])
-                    .style(theme::input),
+                field(
+                    text_input("start", &app.seg_start)
+                        .on_input(Message::SegStart)
+                        .size(FONT)
+                        .width(70)
+                        .padding([3, 6])
+                        .style(theme::input)
+                ),
+                field(
+                    text_input("end", &app.seg_end)
+                        .on_input(Message::SegEnd)
+                        .size(FONT)
+                        .width(70)
+                        .padding([3, 6])
+                        .style(theme::input)
+                ),
                 btn(
                     "Mute",
                     Some(Message::AddSegment(photo_media::audio::RedactKind::Mute))

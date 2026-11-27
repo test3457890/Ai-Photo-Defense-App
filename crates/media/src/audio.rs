@@ -714,6 +714,47 @@ pub fn export_wav(input: &Path, output: &Path, segments: &[Segment]) -> Result<E
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    /// Minimal big-endian 16-bit AIFF at 44.1 kHz (sample rate as 80-bit extended float).
+    fn write_test_aiff(path: &Path, ch: u16, frames: u32) {
+        let mut ssnd = vec![0u8; 8];
+        for i in 0..frames {
+            let v = (0.4 * (2. * std::f32::consts::PI * 440. * i as f32 / 44_100.).sin() * 32767.)
+                as i16;
+            for _ in 0..ch {
+                ssnd.extend_from_slice(&v.to_be_bytes());
+            }
+        }
+        let mut comm = ch.to_be_bytes().to_vec();
+        comm.extend_from_slice(&frames.to_be_bytes());
+        comm.extend_from_slice(&16u16.to_be_bytes());
+        comm.extend_from_slice(&[0x40, 0x0E, 0xAC, 0x44, 0, 0, 0, 0, 0, 0]);
+        let mut body = b"AIFF".to_vec();
+        for (id, data) in [(b"COMM", &comm), (b"SSND", &ssnd)] {
+            body.extend_from_slice(id);
+            body.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            body.extend_from_slice(data);
+        }
+        let mut f = b"FORM".to_vec();
+        f.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        f.extend_from_slice(&body);
+        std::fs::write(path, f).unwrap();
+    }
+    #[test]
+    fn aiff_decodes_and_exports() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("a.aiff");
+        write_test_aiff(&src, 2, 22_050);
+        assert_eq!(
+            crate::detect(&std::fs::read(&src).unwrap()).container,
+            "AIFF"
+        );
+        let a = analyze(&src).unwrap();
+        assert_eq!((a.sample_rate, a.channels, a.frames), (44_100, 2, 22_050));
+        let out = d.path().join("a.wav");
+        let r = export_wav(&src, &out, &[]).unwrap();
+        assert!(r.verified);
+        assert_eq!(r.frames_out, 22_050);
+    }
     pub fn write_test_wav(path: &Path, rate: u32, ch: u16, secs: f32, int16: bool) {
         let spec = hound::WavSpec {
             channels: ch,

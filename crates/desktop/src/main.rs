@@ -10,6 +10,7 @@
 // Release builds are GUI-only on Windows: no console window opens beside the application.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod app;
+mod clip;
 mod theme;
 mod views;
 mod widgets;
