@@ -22,6 +22,7 @@ rustfft = "6.4"
 ebur128 = "0.1"
 # FilmCraft's own pure-Rust codecs (MIT OR Apache-2.0), pinned to the commit FilmCraft itself uses.
 craft-video = { git = "https://github.com/storytold/craft-libs", rev = "a4db799563c9ccd7217e1731ec34c58f6ba57248", default-features = false, features = ["h264-decode", "h264-encode"], optional = true }
+craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "a4db799563c9ccd7217e1731ec34c58f6ba57248", default-features = false, features = ["opus-decode"], optional = true }
 candle-core = { version = "0.11.1", optional = true }
 candle-nn = { version = "0.11.1", optional = true }
 candle-transformers = { version = "0.11.1", optional = true }
@@ -32,6 +33,12 @@ default = []
 stt = ["dep:candle-core", "dep:candle-nn", "dep:candle-transformers", "dep:tokenizers"]
 voice-protect = ["dep:candle-core", "dep:candle-nn", "dep:photo-models"]
 video = ["dep:craft-video"]
+opus = ["dep:craft-audio"]
 
 [dev-dependencies]
 image.workspace = true
+craft-audio = { git = "https://github.com/storytold/craft-libs", rev = "a4db799563c9ccd7217e1731ec34c58f6ba57248", default-features = false, features = ["opus-decode", "opus-encode"] }
+
+[[example]]
+name = "synth_h264"
+required-features = ["video"]

@@ -39,3 +39,12 @@ Scope: the twelve `ag/*` branches produced by the Google Antigravity agent on th
 ## What this means
 
 New in the app and verified: face detection on real photographs, C2PA inspection/signing (unit level), installers and GUI smoke CI (pending first run), branding. Present but unverified, and labelled so: voice protection, speech-to-text, wake-word suppression, Ask AI. Still not available in `main`: video frames and Opus (port pending), WMA/AC-3/AMR, person/object/document/plate detection and OCR, signed releases.
+
+## Follow-up: video and Opus ported to FilmCraft's own libraries (2026-11-27)
+
+`ag/video-frames`, `ag/video-tracking-verify` and `ag/opus-wma` were merged after replacing `filmcraft-h264`, `filmcraft-h264enc`, `filmcraft-opus` and the test-only `effectcraft-opusenc` (all owned by `aphrody-dev` on crates.io) with `craft-video` and `craft-audio` from `storytold/craft-libs` at commit `a4db799`, the revision FilmCraft's own workspace pins. The public API was identical (only import paths changed; craft's Opus encoder returns `Result`). `deny.toml` allows exactly that git source.
+
+Checks: all media tests pass with `video,opus` (20); workspace 115 passed with all features, 94 with defaults; clippy, deny, audit clean. Real runs on a synthetic H.264 clip (320x240, 30 fps, 90 frames, generated with `cargo run -p photo-media --features video --example synth_h264`): `video-redact` 90 frames in and out, duration 3.0 s, A/V difference 0, metadata removed; `video-track` per-frame verification 90 checked, 0 failed. Desktop: frame preview, Play/Pause and scrub work (screenshot `docs/screenshots/part5-video-panel.png`).
+
+Not tested: a real phone recording with AAC audio, HEVC/AV1 inputs (refused), real `.opus`/`.webm` files. Both features stay out of the installers until a real-file test passes.
+

@@ -5,7 +5,7 @@
 Antigravity built twelve `ag/*` branches; Claude reviewed them, merged eight into `claude/part5-integration`, fixed what the review found, and ran the checks. Full record: [docs/PART5_VALIDATION_REPORT.md](docs/PART5_VALIDATION_REPORT.md).
 
 - **Merged:** face detection (verified on real public-domain photos), C2PA, installers (tool versions pinned, appimagetool checksum-verified), GUI smoke CI, logo/icons, experimental voice protection, wake-word safe playback, Ask AI (loopback-only, 4 MiB cap), UI scaling.
-- **Not merged:** video frames, video tracking and Opus. Their codec crates (`filmcraft-*` on crates.io) come from a publisher with no verifiable link to FilmCraft. **First task for the next session:** port those branches to the official `storytold/craft-libs` (Apache-2.0) pinned by commit, then test on a real phone clip.
+- **Video and Opus (follow-up PR):** ported from look-alike `filmcraft-*` crates to FilmCraft's own `craft-video`/`craft-audio` (storytold/craft-libs @ a4db799, MIT OR Apache-2.0) and merged as optional `video`/`opus` features, tested on synthetic media and in the desktop app. **Next:** test on a real phone clip with AAC audio and a real .opus file, then decide whether to include them in installers.
 - **Unverified (no model files or devices here):** ECAPA parity and voice-protection effect, Whisper accuracy, wake-word suppression on real assistants, C2PA with a CA-issued certificate.
 
 ## Part 5 increment (2026-11-26, Claude Opus 5.5)

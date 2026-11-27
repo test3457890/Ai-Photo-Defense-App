@@ -39,3 +39,6 @@ allow-wildcard-paths = true
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# FilmCraft's own codec libraries (MIT OR Apache-2.0). Only used by the optional `video` and
+# `opus` features, pinned by commit in crates/media/Cargo.toml.
+allow-git = ["https://github.com/storytold/craft-libs"]
