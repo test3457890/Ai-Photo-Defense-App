@@ -29,7 +29,7 @@
         <Directory Id='TARGETDIR' Name='SourceDir'>
             <Directory Id='ProgramFiles64Folder' Name='PFiles'>
                 <Directory Id='APPLICATIONFOLDER' Name='AI Photo Defense'>
-                    <Component Id='Binaries' Guid='*'>
+                    <Component Id='Binaries' Guid='EB29FA0F-A955-4983-805E-FE0C0E461769'>
                         <File Id='DesktopExe' Name='photo-desktop.exe' DiskId='1' Source='target\release\photo-desktop.exe' KeyPath='yes'/>
                         <File Id='CliExe' Name='photo-defense.exe' DiskId='1' Source='target\release\photo-defense.exe'/>
                         <File Id='LicenseFile' Name='LICENSE' DiskId='1' Source='LICENSE'/>
