@@ -2178,7 +2178,7 @@ fn forensics(app: &App) -> El<'_> {
 fn lab(app: &App) -> El<'_> {
     use photo_lab::validation::ValidationMode;
     let mut c = column![
-        small("VALIDATION CENTER (honest local assessment — no overall protection % is invented)"),
+        small("VALIDATION CENTER (honest local assessment - no overall protection % is invented)"),
         row![
             btn(
                 "Quick Test",
@@ -2931,10 +2931,10 @@ fn update_status_block(app: &App) -> El<'_> {
 fn startup_wizard(app: &App) -> El<'_> {
     let step = app.wizard_step;
     let step_title = match step {
-        0 => "Step 1 of 4 — Welcome to AI Photo Defense",
-        1 => "Step 2 of 4 — Choose How You Want to Work",
-        2 => "Step 3 of 4 — Updates & Optional Local Models",
-        _ => "Step 4 of 4 — Ready to Start",
+        0 => "Step 1 of 4: Welcome to AI Photo Defense",
+        1 => "Step 2 of 4: Choose How You Want to Work",
+        2 => "Step 3 of 4: Updates & Optional Local Models",
+        _ => "Step 4 of 4: Ready to Start",
     };
 
     let body: El<'_> = match step {
@@ -3025,7 +3025,7 @@ fn startup_wizard(app: &App) -> El<'_> {
     container(
         container(
             column![
-                text("AI Photo Defense — Startup Wizard").size(FONT_TITLE),
+                text("AI Photo Defense - Startup Wizard").size(FONT_TITLE),
                 small(step_title),
                 horizontal_rule(1),
                 body,
@@ -3061,7 +3061,7 @@ fn home(app: &App) -> El<'_> {
     let content = column![
         row![
             column![
-                text("AI Photo Defense — Main Menu").size(FONT_TITLE),
+                text("AI Photo Defense - Main Menu").size(FONT_TITLE),
                 small("Offline-first media privacy workstation for Windows, macOS, and Linux."),
             ]
             .spacing(2),
@@ -3121,13 +3121,19 @@ fn home(app: &App) -> El<'_> {
         horizontal_rule(1),
         container(
             column![
-                t("Session & Updates"),
+                t("Session, Error Log & Updates"),
                 small(format!(
                     "Photos loaded: {} · Media files loaded: {} · Enabled features: [{}]",
                     app.entries.len(),
                     app.media.len(),
                     features
                 )),
+                row![
+                    btn("Save Sanitized Error Log", Some(Message::SaveReport)),
+                    small("Saves an anonymized system/error log (no photos, paths, or personal info) to share for bug reports."),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
                 update_status_block(app),
             ]
             .spacing(6),
@@ -3164,7 +3170,7 @@ fn tutorial(app: &App) -> El<'_> {
 
     let (title, desc, action_row): (&str, &str, El<'_>) = match step {
         0 => (
-            "Step 1 of 5 — Import a Photo (Your Original Is Never Changed)",
+            "Step 1 of 5: Import a Photo (Your Original Is Never Changed)",
             "Click 'Load Sample Photo' to try immediately with our calibration image, or 'Import Photos' to pick your own JPEG/PNG/WebP/RAW.",
             row![
                 btn("Load Sample Photo", Some(Message::LoadCalibrationSample)),
@@ -3175,7 +3181,7 @@ fn tutorial(app: &App) -> El<'_> {
             .into(),
         ),
         1 => (
-            "Step 2 of 5 — Run Local Privacy Scan",
+            "Step 2 of 5: Run Local Privacy Scan",
             "Privacy Scan inspects EXIF/GPS location tags, camera serial numbers, QR/barcodes, and sensitive text locally on your device.",
             row![
                 btn("Run Scan Now", app.selected.map(|_| Message::Scan)),
@@ -3186,7 +3192,7 @@ fn tutorial(app: &App) -> El<'_> {
             .into(),
         ),
         2 => (
-            "Step 3 of 5 — Redact Sensitive Areas",
+            "Step 3 of 5: Redact Sensitive Areas",
             "In Essential or Professional mode, drag a rectangle/ellipse over faces, license plates, or QR codes. Use solid opaque redaction for secrets (blur can be partially reversed).",
             row![
                 btn(
@@ -3200,7 +3206,7 @@ fn tutorial(app: &App) -> El<'_> {
             .into(),
         ),
         3 => (
-            "Step 4 of 5 — Export a Verified Clean Copy",
+            "Step 4 of 5: Export a Verified Clean Copy",
             "Export strips all metadata and re-opens the saved file to verify no hidden EXIF/GPS or unredacted QR codes remain.",
             row![
                 btn(
@@ -3216,7 +3222,7 @@ fn tutorial(app: &App) -> El<'_> {
             .into(),
         ),
         _ => (
-            "Step 5 of 5 — Verify in Validation Center",
+            "Step 5 of 5: Verify in Validation Center",
             "Open Technical > Defense Lab to inspect image quality (PSNR, SSIM, CIELAB Delta-E), run the 23-transform durability suite, or test local AI models.",
             row![
                 btn("Open Validation Center", Some(Message::Page(TechPage::Lab))),

@@ -130,7 +130,7 @@ impl ValidationSuiteReport {
 
     pub fn to_markdown(&self) -> String {
         let mut md = String::new();
-        md.push_str("# AI Photo Defense — Validation Report\n\n");
+        md.push_str("# AI Photo Defense - Validation Report\n\n");
         md.push_str(&format!("- **Mode:** {}\n", self.mode.label()));
         md.push_str(&format!(
             "- **Resolution:** {}x{}\n",

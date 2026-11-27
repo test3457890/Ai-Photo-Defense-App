@@ -1980,7 +1980,14 @@ impl App {
                         }
                         return Task::batch(tasks);
                     }
-                    Err(e) => self.note(e),
+                    Err(e) => {
+                        photo_log::error(
+                            Component::App,
+                            Code::Other,
+                            &format!("Validation error: {e}"),
+                        );
+                        self.note(e);
+                    }
                 }
             }
             Message::Select(i) if i < self.entries.len() => {
@@ -2857,7 +2864,14 @@ impl App {
                 self.busy = None;
                 match r {
                     Ok(r) => self.lab = Some(r),
-                    Err(e) => self.note(e),
+                    Err(e) => {
+                        photo_log::error(
+                            Component::App,
+                            Code::Other,
+                            &format!("Validation error: {e}"),
+                        );
+                        self.note(e);
+                    }
                 }
             }
             Message::RunValidation(mode) => {
@@ -2905,7 +2919,7 @@ impl App {
                                                 .map(|t| format!("{}: {}", t.category.label(), t.classification.label()))
                                                 .collect();
                                             Ok(format!(
-                                                "{name} ({}x{}, SSIM {:.4}) — {}",
+                                                "{name} ({}x{}, SSIM {:.4}) - {}",
                                                 rep.quality.resolution[0],
                                                 rep.quality.resolution[1],
                                                 rep.quality.base.ssim_luma_8x8,
@@ -2914,7 +2928,7 @@ impl App {
                                         })();
                                         match res {
                                             Ok(line) => line,
-                                            Err(e) => format!("{name} — Error: {e}"),
+                                            Err(e) => format!("{name} - Error: {e}"),
                                         }
                                     })
                                     .collect()
@@ -3005,7 +3019,10 @@ impl App {
                             self.note(format!("Up to date ({})", info.current_version));
                         }
                     }
-                    Err(e) => self.note(format!("Update check: {e}")),
+                    Err(e) => {
+                        photo_log::warn(Component::App, Code::Other, &format!("Update check: {e}"));
+                        self.note(format!("Update check: {e}"));
+                    }
                 }
                 self.update_status = Some(res);
             }
@@ -3040,6 +3057,11 @@ impl App {
                         self.download_status = Some(msg.clone());
                     }
                     Err(e) => {
+                        photo_log::error(
+                            Component::App,
+                            Code::Other,
+                            &format!("Installer download failed: {e}"),
+                        );
                         self.note(format!("Download failed: {e}"));
                         self.download_status = Some(format!("Download error: {e}"));
                     }
@@ -3118,6 +3140,11 @@ impl App {
                             self.note(msg);
                         }
                         Err(e) => {
+                            photo_log::error(
+                                Component::Edit,
+                                Code::Other,
+                                &format!("Video track failed: {e}"),
+                            );
                             m.status = format!("Track failed: {e}");
                             self.note(e);
                         }
@@ -3131,7 +3158,14 @@ impl App {
                         self.note(format!("Validation complete: {}", rep.mode.label()));
                         self.validation_report = Some(rep);
                     }
-                    Err(e) => self.note(e),
+                    Err(e) => {
+                        photo_log::error(
+                            Component::App,
+                            Code::Other,
+                            &format!("Validation error: {e}"),
+                        );
+                        self.note(e);
+                    }
                 }
             }
             Message::ExportValidationReport(markdown) => {
@@ -3398,7 +3432,14 @@ impl App {
                             }
                         }
                     }
-                    Err(e) => self.note(e),
+                    Err(e) => {
+                        photo_log::error(
+                            Component::App,
+                            Code::Other,
+                            &format!("Validation error: {e}"),
+                        );
+                        self.note(e);
+                    }
                 }
             }
             Message::StopAudio => {

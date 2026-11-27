@@ -1,6 +1,6 @@
 ﻿<#
 .SYNOPSIS
-    AI Photo Defense — End-to-End Verification & Gemini/ChatGPT Test Helper Script
+    AI Photo Defense - End-to-End Verification & Gemini/ChatGPT Test Helper Script
 
 .DESCRIPTION
     Tests whether AI Photo Defense works on a given photograph:

@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.6.0 (unreleased)
+## 1.0.0 (2026-11-27)
+
+Official 1.0.0 release candidate: Startup Wizard, Main Menu, Interactive Tutorial Mode, Opt-In GitHub Release Updater (tag-gated `v*` releases only), Sanitized Error Log export, Validation Center, 23-transform Real-World Durability Suite, and hardened adversarial engine (`photo-engine`).
 
 ### Protection Hardening & Validation Suite (`gemini/protection-validation`, 2026-11-27)
 
