@@ -6,11 +6,16 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+ask-ai = ["dep:serde_json", "dep:sysinfo"]
+
 [dependencies]
 anyhow.workspace = true
 serde.workspace = true
 sha2.workspace = true
 safetensors = "0.6"
+serde_json = { workspace = true, optional = true }
+sysinfo = { version = "0.40", default-features = false, features = ["system"], optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

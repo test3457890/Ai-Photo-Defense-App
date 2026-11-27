@@ -343,6 +343,9 @@ fn menu_popup(app: &App, m: Menu) -> El<'_> {
                     "",
                     Some(Message::Appearance(theme::Appearance::Paper)),
                 ),
+                item("Scale 100%", "", Some(Message::UiScale(1.0))),
+                item("Scale 125%", "", Some(Message::UiScale(1.25))),
+                item("Scale 150%", "", Some(Message::UiScale(1.5))),
             ],
         ),
         Menu::Help => (
