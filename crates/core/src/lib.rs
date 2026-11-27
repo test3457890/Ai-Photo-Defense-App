@@ -9,6 +9,8 @@ use std::{
     path::Path,
 };
 
+pub mod raw;
+
 pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 pub const MAX_PIXELS: u64 = 24_000_000;
 pub const MAX_SIDE: u32 = 16_384;
@@ -29,27 +31,77 @@ pub struct Photo {
     pub pixels: DynamicImage,
     pub fingerprint: Fingerprint,
     pub format: ImageFormat,
+    /// The exact bytes that were read, for metadata inspection without a second read.
+    pub bytes: Vec<u8>,
+    /// Set when the pixels come from a RAW file's embedded camera preview.
+    pub raw: Option<raw::RawKind>,
+}
+impl Photo {
+    /// Same source (hash, bytes, RAW status) with different pixels, e.g. after edits.
+    pub fn with_pixels(&self, pixels: DynamicImage) -> Photo {
+        Photo {
+            pixels,
+            fingerprint: self.fingerprint.clone(),
+            format: self.format,
+            bytes: self.bytes.clone(),
+            raw: self.raw,
+        }
+    }
 }
 /// Uses one bounded byte snapshot, avoiding a dimensions/decode path replacement race.
 pub fn load(path: &Path) -> Result<Photo> {
     let file = File::open(path).context("Open image")?;
     ensure!(file.metadata()?.is_file(), "Input must be a regular file");
     ensure!(
-        file.metadata()?.len() <= MAX_FILE_BYTES,
-        "Input exceeds 64 MiB"
+        file.metadata()?.len() <= raw::MAX_RAW_BYTES,
+        "Input exceeds 256 MiB"
     );
     let mut bytes = Vec::new();
-    file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes)?;
+    file.take(MAX_FILE_BYTES.max(raw::MAX_RAW_BYTES) + 1)
+        .read_to_end(&mut bytes)?;
+    let ext = path.extension().and_then(|e| e.to_str());
+    let (pixels, format, raw) = match raw::identify(&bytes, ext) {
+        Some(_) => {
+            ensure!(
+                bytes.len() as u64 <= raw::MAX_RAW_BYTES,
+                "RAW file exceeds 256 MiB"
+            );
+            let preview = raw::extract_preview(&bytes, ext)?;
+            let (pixels, format) = decode_bounded(&preview.jpeg)?;
+            (pixels, format, Some(preview.kind))
+        }
+        None => {
+            let (pixels, format) = decode_bounded(&bytes)?;
+            (pixels, format, None)
+        }
+    };
+    Ok(Photo {
+        pixels,
+        fingerprint: fingerprint(&bytes),
+        format,
+        bytes,
+        raw,
+    })
+}
+
+/// Decodes untrusted bytes with format allow-listing, dimension, pixel-count, allocation and
+/// bit-depth limits. Used for imports and for re-opening exported files during verification.
+pub fn decode_bounded(bytes: &[u8]) -> Result<(DynamicImage, ImageFormat)> {
     ensure!(bytes.len() as u64 <= MAX_FILE_BYTES, "Input exceeds 64 MiB");
-    let format = image::guess_format(&bytes).context("Unknown image format")?;
+    let format = image::guess_format(bytes).context("Unknown image format")?;
     ensure!(
         matches!(
             format,
-            ImageFormat::Jpeg | ImageFormat::Png | ImageFormat::WebP | ImageFormat::Tiff
+            ImageFormat::Jpeg
+                | ImageFormat::Png
+                | ImageFormat::WebP
+                | ImageFormat::Tiff
+                | ImageFormat::Bmp
+                | ImageFormat::Gif
         ),
-        "Only JPEG, PNG, WebP and TIFF supported"
+        "Only JPEG, PNG, WebP, TIFF, BMP and GIF are supported"
     );
-    let mut reader = ImageReader::with_format(Cursor::new(&bytes), format);
+    let mut reader = ImageReader::with_format(Cursor::new(bytes), format);
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_SIDE);
     limits.max_image_height = Some(MAX_SIDE);
@@ -74,11 +126,7 @@ pub fn load(path: &Path) -> Result<Photo> {
     let orientation = decoder.orientation()?;
     let mut pixels = DynamicImage::from_decoder(decoder).context("Decode image")?;
     pixels.apply_orientation(orientation);
-    Ok(Photo {
-        pixels,
-        fingerprint: fingerprint(&bytes),
-        format,
-    })
+    Ok((pixels, format))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -154,6 +202,38 @@ pub fn save_new(path: &Path, bytes: &[u8]) -> Result<()> {
     temp.persist_noclobber(path)
         .map_err(|e| anyhow::anyhow!("Export refused (destination must be new): {}", e.error))?;
     Ok(())
+}
+
+/// Publishes `bytes` as `<stem><suffix>.<ext>` in `dir`, adding `-2`, `-3`... when a name is
+/// taken. Never replaces an existing file; the name is chosen atomically by no-clobber rename.
+pub fn save_unique(dir: &Path, stem: &str, ext: &str, bytes: &[u8]) -> Result<std::path::PathBuf> {
+    ensure!(dir.is_dir(), "Output directory must already exist");
+    ensure!(
+        !stem.is_empty()
+            && stem.len() <= 120
+            && stem
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            && ext.chars().all(|c| c.is_ascii_alphanumeric() || c == '.'),
+        "Unsafe output filename"
+    );
+    let mut temp = tempfile::NamedTempFile::new_in(dir).context("Create private temporary file")?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    for n in 1..=1000u32 {
+        let name = if n == 1 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem}-{n}.{ext}")
+        };
+        let path = dir.join(name);
+        match temp.persist_noclobber(&path) {
+            Ok(_) => return Ok(path),
+            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => temp = e.file,
+            Err(e) => bail!("Export failed: {}", e.error),
+        }
+    }
+    bail!("No free output filename after 1000 attempts")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,8 +320,9 @@ pub fn difference(a: &DynamicImage, b: &DynamicImage, gain: u8) -> Result<Dynami
     Ok(DynamicImage::ImageRgb8(out))
 }
 
+/// Re-opens an encoded export under the same limits as untrusted input.
 pub fn decode_export(bytes: &[u8]) -> Result<DynamicImage> {
-    Ok(image::load_from_memory(bytes)?)
+    Ok(decode_bounded(bytes)?.0)
 }
 
 pub fn safe_stem(path: &Path) -> Result<String> {
@@ -346,6 +427,11 @@ mod tests {
         assert!(save_new(&p, b"bad").is_err());
         assert_eq!(load(&p).unwrap().pixels.width(), 16);
         assert_eq!(std::fs::read(p).unwrap(), bytes);
+        let a = save_unique(d.path(), "out", "png", b"one").unwrap();
+        let b = save_unique(d.path(), "out", "png", b"two").unwrap();
+        assert!(a.ends_with("out-2.png") && b.ends_with("out-3.png"));
+        assert_eq!(std::fs::read(d.path().join("out.png")).unwrap(), bytes);
+        assert!(save_unique(d.path(), "../x", "png", b"x").is_err());
     }
     #[test]
     fn rejects_malformed() {

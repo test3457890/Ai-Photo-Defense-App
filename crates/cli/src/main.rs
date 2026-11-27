@@ -74,6 +74,290 @@ enum Command {
     VerifyModel { model: PathBuf, manifest: PathBuf },
     /// Refuses to claim protection until a validated model adapter is installed.
     Protect { input: PathBuf },
+    /// Local Privacy Scan: metadata, decoded codes and sensitive text. Prints JSON without values.
+    Scan {
+        input: PathBuf,
+        #[command(flatten)]
+        profile: ProfileArgs,
+        /// Additional text to scan (for example output of an external OCR tool you trust).
+        #[arg(long)]
+        text: Vec<String>,
+    },
+    /// Edit, redact, verify and export one photograph through the secure pipeline.
+    Process {
+        input: PathBuf,
+        #[arg(short, long)]
+        output_dir: PathBuf,
+        #[command(flatten)]
+        edit: EditArgs,
+        #[command(flatten)]
+        profile: ProfileArgs,
+        #[arg(long, value_enum, default_value = "png")]
+        format: Format,
+        #[arg(long,default_value_t=92,value_parser=clap::value_parser!(u8).range(1..=100))]
+        quality: u8,
+        /// Opaquely redact every located finding (decoded QR codes and barcodes).
+        #[arg(long)]
+        auto_redact: bool,
+        /// Publish even if final verification reports unresolved findings.
+        #[arg(long)]
+        accept_unresolved: bool,
+    },
+    /// Process files or folders. Photos with located findings go to a review queue unless --auto-redact.
+    Batch {
+        #[arg(required = true)]
+        inputs: Vec<PathBuf>,
+        #[arg(short, long)]
+        output_dir: PathBuf,
+        #[arg(long)]
+        recursive: bool,
+        #[command(flatten)]
+        edit: EditArgs,
+        #[command(flatten)]
+        profile: ProfileArgs,
+        #[arg(long, value_enum, default_value = "png")]
+        format: Format,
+        #[arg(long,default_value_t=92,value_parser=clap::value_parser!(u8).range(1..=100))]
+        quality: u8,
+        #[arg(long)]
+        auto_redact: bool,
+        #[arg(long)]
+        accept_unresolved: bool,
+        #[arg(long)]
+        keep_duplicates: bool,
+        /// Keep watching the inputs, polling every N seconds for new files (Ctrl+C to stop).
+        #[arg(long)]
+        watch: Option<u64>,
+        /// Write the batch summary JSON (new file only).
+        #[arg(long)]
+        summary: Option<PathBuf>,
+    },
+    /// List built-in privacy profiles, or print one as JSON for editing and re-import.
+    Profiles { name: Option<String> },
+    /// Read-only forensic inspection (hashes, EXIF, JPEG tables, C2PA presence). Output is sensitive.
+    Forensics { input: PathBuf },
+    /// Extract the embedded camera preview from a RAW file as a new JPEG (no RAW development).
+    RawPreview { input: PathBuf, output: PathBuf },
+    /// Embed an invisible ownership watermark (48-bit payload). The passphrase is read from the
+    /// environment variable named by --key-env so it does not appear in shell history.
+    /// Survives JPEG quality 70+; does NOT survive resizing or cropping and is not AI protection.
+    WatermarkEmbed {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Payload number to embed (0 to 2^48-1), for example an owner or licence ID.
+        #[arg(long)]
+        payload: u64,
+        #[arg(long, default_value = "APD_WATERMARK_KEY")]
+        key_env: String,
+        #[arg(long, value_enum, default_value_t = Format::Png)]
+        format: Format,
+        #[arg(long, default_value_t = 92)]
+        quality: u8,
+        #[arg(long, default_value_t = 4.0)]
+        strength: f32,
+    },
+    /// Look for a watermark made with the passphrase in --key-env.
+    WatermarkDetect {
+        input: PathBuf,
+        #[arg(long, default_value = "APD_WATERMARK_KEY")]
+        key_env: String,
+    },
+    /// Identify any media file by content and list its tracks, codecs and privacy metadata.
+    MediaInspect { input: PathBuf },
+    /// Remove privacy metadata from MP4/MOV/M4A/3GP without re-encoding; verifies every chunk.
+    StripVideo {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Loudness (EBU R128), true peak, clipping, silence and spectrum summary of an audio file.
+    AudioAnalyze { input: PathBuf },
+    /// Compare two recordings sample by sample (SNR, segmental SNR, length).
+    AudioCompare {
+        original: PathBuf,
+        processed: PathBuf,
+    },
+    /// Export audio as metadata-free WAV, optionally muting or bleeping time ranges (seconds).
+    AudioExport {
+        input: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Range to mute, e.g. 12.5-14 (repeatable).
+        #[arg(long)]
+        mute: Vec<String>,
+        /// Range to bleep, e.g. 30-31.2 (repeatable).
+        #[arg(long)]
+        bleep: Vec<String>,
+    },
+    /// Adversarial voice protection. Refuses: no validated voice model is installed.
+    AudioProtect { input: PathBuf },
+    /// Scan SRT/WebVTT subtitles for private information; optionally write a redacted copy.
+    Subtitles {
+        input: PathBuf,
+        #[arg(long)]
+        redact_to: Option<PathBuf>,
+    },
+}
+#[derive(clap::Args, Clone)]
+struct ProfileArgs {
+    /// Built-in privacy profile name.
+    #[arg(long, default_value = "Maximum Privacy")]
+    profile: String,
+    /// Custom profile JSON file (overrides --profile).
+    #[arg(long)]
+    profile_file: Option<PathBuf>,
+}
+impl ProfileArgs {
+    fn load(&self) -> Result<photo_privacy::Profile> {
+        if let Some(f) = &self.profile_file {
+            use std::io::Read;
+            let mut b = vec![];
+            std::fs::File::open(f)?
+                .take(photo_privacy::profiles::MAX_PROFILE_BYTES as u64 + 1)
+                .read_to_end(&mut b)?;
+            return photo_privacy::Profile::from_json(&b);
+        }
+        photo_privacy::Profile::builtin(&self.profile).with_context(|| {
+            format!(
+                "Unknown profile. Built-in: {}",
+                photo_privacy::profiles::BUILTIN.join(", ")
+            )
+        })
+    }
+}
+#[derive(clap::Args, Clone, Default)]
+struct EditArgs {
+    /// Edit recipe JSON (a list of operations), applied before the flags below.
+    #[arg(long)]
+    recipe: Option<PathBuf>,
+    /// Centered crop to an aspect ratio: original, 1:1, 4:3, 3:2, 16:9, 9:16, 4:5 or W:H.
+    #[arg(long)]
+    aspect: Option<String>,
+    /// Crop rectangle x,y,width,height.
+    #[arg(long)]
+    crop: Option<String>,
+    /// Rotate clockwise by 90, 180 or 270 degrees.
+    #[arg(long)]
+    rotate: Option<u16>,
+    /// Straighten by a small angle in degrees (-45..45).
+    #[arg(long, allow_hyphen_values = true)]
+    straighten: Option<f32>,
+    #[arg(long)]
+    flip_horizontal: bool,
+    #[arg(long)]
+    flip_vertical: bool,
+    /// Fit within WIDTHxHEIGHT without upscaling, e.g. 1080x1350.
+    #[arg(long)]
+    fit: Option<String>,
+    /// Opaque redaction rectangle x,y,width,height (repeatable).
+    #[arg(long)]
+    redact: Vec<String>,
+    /// Opaque redaction color: black, white or #rrggbb.
+    #[arg(long, default_value = "black")]
+    redact_color: String,
+    /// Gaussian blur rectangle x,y,width,height (visual concealment only; repeatable).
+    #[arg(long)]
+    blur: Vec<String>,
+    /// Pixelate rectangle x,y,width,height (visual concealment only; repeatable).
+    #[arg(long)]
+    pixelate: Vec<String>,
+}
+fn rect(s: &str) -> Result<photo_edit::Rect> {
+    let v: Vec<u32> = s
+        .split(',')
+        .map(|x| x.trim().parse())
+        .collect::<Result<_, _>>()
+        .context("Rectangle must be x,y,width,height")?;
+    ensure!(
+        v.len() == 4 && v[2] > 0 && v[3] > 0,
+        "Rectangle must be x,y,width,height with non-zero size"
+    );
+    Ok(photo_edit::Rect::new(v[0], v[1], v[2], v[3]))
+}
+fn color(s: &str) -> Result<[u8; 3]> {
+    Ok(match s.to_ascii_lowercase().as_str() {
+        "black" => [0, 0, 0],
+        "white" => [255, 255, 255],
+        h if h.len() == 7 && h.starts_with('#') && h.is_ascii() => {
+            let p = |i: usize| u8::from_str_radix(&h[i..i + 2], 16);
+            [p(1)?, p(3)?, p(5)?]
+        }
+        _ => anyhow::bail!("Color must be black, white or #rrggbb"),
+    })
+}
+impl EditArgs {
+    fn operations(&self) -> Result<Vec<photo_edit::Operation>> {
+        use photo_edit::{AspectRatio, Concealment, Operation, Selection};
+        let mut ops = vec![];
+        if let Some(r) = &self.recipe {
+            use std::io::Read;
+            let mut b = vec![];
+            std::fs::File::open(r)?.take(1 << 20).read_to_end(&mut b)?;
+            ensure!(b.len() < 1 << 20, "Recipe too large");
+            ops = serde_json::from_slice(&b).context("Recipe must be a JSON list of operations")?;
+        }
+        if let Some(r) = &self.crop {
+            ops.push(Operation::Crop(rect(r)?));
+        }
+        if let Some(a) = &self.aspect {
+            let ratio = match a.as_str() {
+                "original" => AspectRatio::Original,
+                "1:1" => AspectRatio::Square,
+                "4:3" => AspectRatio::R4x3,
+                "3:2" => AspectRatio::R3x2,
+                "16:9" => AspectRatio::R16x9,
+                "9:16" => AspectRatio::R9x16,
+                "4:5" => AspectRatio::R4x5,
+                other => {
+                    let (w, h) = other.split_once(':').context("Aspect must be W:H")?;
+                    AspectRatio::Custom {
+                        width: w.parse()?,
+                        height: h.parse()?,
+                    }
+                }
+            };
+            ops.push(Operation::CropAspect(ratio));
+        }
+        match self.rotate {
+            None | Some(0) => {}
+            Some(90) => ops.push(Operation::Rotate90),
+            Some(180) => ops.push(Operation::Rotate180),
+            Some(270) => ops.push(Operation::Rotate270),
+            Some(_) => anyhow::bail!("Rotate must be 90, 180 or 270"),
+        }
+        if let Some(d) = self.straighten {
+            ops.push(Operation::Straighten { degrees: d });
+        }
+        if self.flip_horizontal {
+            ops.push(Operation::FlipHorizontal);
+        }
+        if self.flip_vertical {
+            ops.push(Operation::FlipVertical);
+        }
+        if let Some(f) = &self.fit {
+            let (w, h) = f.split_once('x').context("Fit must be WIDTHxHEIGHT")?;
+            ops.push(Operation::FitWithin {
+                max_width: w.parse()?,
+                max_height: h.parse()?,
+            });
+        }
+        let rgb = color(&self.redact_color)?;
+        for (list, method) in [
+            (&self.blur, Concealment::GaussianBlur { sigma: 12. }),
+            (&self.pixelate, Concealment::Pixelate { block: 16 }),
+            (&self.redact, Concealment::Solid { rgb }),
+        ] {
+            for r in list {
+                ops.push(Operation::Conceal {
+                    selection: Selection::Rect(rect(r)?),
+                    method,
+                    invert: false,
+                });
+            }
+        }
+        Ok(ops)
+    }
 }
 fn main() -> Result<()> {
     match Args::parse().command {
@@ -164,11 +448,351 @@ fn main() -> Result<()> {
             epsilon,
             steps,
         } => experimental_clip(&input, &model, &manifest, &output, epsilon, steps)?,
+        Command::Scan {
+            input,
+            profile,
+            text,
+        } => {
+            let photo = load(&input)?;
+            let spans = text
+                .into_iter()
+                .map(|t| photo_privacy::TextSpan {
+                    text: t,
+                    region: None,
+                    source: photo_privacy::Source::Text,
+                })
+                .collect();
+            let r = photo_privacy::scan(
+                photo_privacy::ScanInput {
+                    bytes: &photo.bytes,
+                    pixels: &photo.pixels,
+                    ocr_text: None,
+                    extra_text: spans,
+                },
+                &profile.load()?,
+            );
+            println!("{}", serde_json::to_string_pretty(&r)?);
+        }
+        Command::Process {
+            input,
+            output_dir,
+            edit,
+            profile,
+            format,
+            quality: q,
+            auto_redact,
+            accept_unresolved,
+        } => {
+            let profile = profile.load()?;
+            let photo = load(&input)?;
+            let mut edits = photo_edit::EditStack::from_operations(edit.operations()?)?;
+            if auto_redact {
+                let staged = photo.with_pixels(edits.render(&photo.pixels)?);
+                let found = photo_pipeline::scan_photo(&staged, &profile).findings;
+                if let Some(op) = photo_pipeline::conceal_findings(&found, profile.redaction, 4) {
+                    edits.push(op)?;
+                }
+            }
+            let format = ExportFormat::from(format);
+            let prepared = photo_pipeline::prepare(&photo, &edits, format, q, &profile)?;
+            let v = &prepared.report.verification;
+            eprintln!(
+                "Verification: {} | metadata findings {} | remaining findings {} | redactions checked {} | AI protection: not applied",
+                if v.passed { "passed" } else { "FAILED" },
+                v.metadata_findings.len(),
+                v.remaining_findings.len(),
+                v.redactions.len()
+            );
+            for w in &v.warnings {
+                eprintln!("Warning: {w}");
+            }
+            let saved =
+                photo_pipeline::publish(&prepared, &input, &output_dir, format, accept_unresolved)?;
+            println!("{}", serde_json::to_string_pretty(&saved)?);
+        }
+        Command::Batch {
+            inputs,
+            output_dir,
+            recursive,
+            edit,
+            profile,
+            format,
+            quality: q,
+            auto_redact,
+            accept_unresolved,
+            keep_duplicates,
+            watch,
+            summary,
+        } => {
+            use photo_pipeline::batch;
+            let opts = batch::BatchOptions {
+                output_dir: output_dir.clone(),
+                format: format.into(),
+                quality: q,
+                profile: profile.load()?,
+                edits: edit.operations()?,
+                auto_redact,
+                accept_unresolved,
+                skip_duplicates: !keep_duplicates,
+            };
+            let collect = batch::CollectOptions {
+                recursive,
+                exclude: vec![output_dir.clone()],
+                ..Default::default()
+            };
+            let control = batch::Control::default();
+            let print = |_: usize, p: &Path, o: &batch::Outcome| match o {
+                batch::Outcome::Exported {
+                    image,
+                    verification_passed,
+                } => println!(
+                    "{} -> {} (verification {})",
+                    p.display(),
+                    image.display(),
+                    if *verification_passed {
+                        "passed"
+                    } else {
+                        "accepted with findings"
+                    }
+                ),
+                batch::Outcome::NeedsReview { findings } => println!(
+                    "{}: REVIEW {} located finding(s); not exported",
+                    p.display(),
+                    findings.len()
+                ),
+                batch::Outcome::Duplicate { of } => {
+                    println!("{}: duplicate of {}", p.display(), of.display())
+                }
+                batch::Outcome::Failed { error } => eprintln!("{}: {error}", p.display()),
+                batch::Outcome::Cancelled => {}
+            };
+            if let Some(secs) = watch {
+                ensure!(
+                    (1..=86_400).contains(&secs),
+                    "Watch interval must be 1..86400 seconds"
+                );
+                let mut monitor = batch::FolderMonitor::default();
+                eprintln!("Watching for new photographs every {secs}s. Press Ctrl+C to stop.");
+                loop {
+                    let fresh = monitor.poll(&inputs, &collect)?;
+                    if !fresh.is_empty() {
+                        batch::run(&fresh, &opts, &control, print)?;
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(secs));
+                }
+            }
+            let c = batch::collect(&inputs, &collect)?;
+            for (p, why) in &c.skipped {
+                eprintln!("Skipped {}: {why}", p.display());
+            }
+            let s = batch::run(&c.files, &opts, &control, print)?;
+            eprintln!(
+                "Batch: {} exported, {} need review, {} duplicates, {} failed",
+                s.exported, s.review, s.duplicates, s.failed
+            );
+            if let Some(path) = summary {
+                save_new(&path, &serde_json::to_vec_pretty(&s)?)?;
+            }
+            ensure!(
+                s.failed == 0,
+                "{} file(s) failed; other results were preserved",
+                s.failed
+            );
+        }
+        Command::Forensics { input } => {
+            let p = load(&input)?;
+            eprintln!(
+                "Sensitive: this report contains file metadata values. Do not share it without review."
+            );
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&photo_privacy::forensics::inspect(&p.bytes))?
+            );
+        }
+        Command::RawPreview { input, output } => {
+            use std::io::Read;
+            let mut b = vec![];
+            std::fs::File::open(&input)?
+                .take(photo_core::raw::MAX_RAW_BYTES + 1)
+                .read_to_end(&mut b)?;
+            let ext = input.extension().and_then(|e| e.to_str());
+            let p = photo_core::raw::extract_preview(&b, ext)?;
+            save_new(&output, &p.jpeg)?;
+            println!(
+                "{:?} preview: {} bytes ({} candidates). Note: embedded camera JPEG, not RAW development; it may contain EXIF.",
+                p.kind,
+                p.jpeg.len(),
+                p.candidates
+            );
+        }
+        Command::WatermarkEmbed {
+            input,
+            output,
+            payload,
+            key_env,
+            format,
+            quality,
+            strength,
+        } => {
+            ensure!(payload < 1 << 48, "Payload must be below 2^48");
+            let key = watermark_key(&key_env)?;
+            let photo = load(&input)?;
+            let mut rgb = photo.pixels.to_rgb8();
+            photo_edit::watermark::embed(&mut rgb, key, payload, strength)?;
+            let img = image::DynamicImage::ImageRgb8(rgb);
+            let bytes = encode(&img, format.into(), quality)?;
+            let check =
+                photo_edit::watermark::detect(&image::load_from_memory(&bytes)?.to_rgb8(), key)?;
+            ensure!(
+                check.payload == Some(payload),
+                "Watermark did not survive encoding at these settings; raise quality or strength"
+            );
+            save_new(&output, &bytes)?;
+            println!(
+                "Embedded and verified after encoding (confidence {:.3}). Not AI protection; does not survive resizing or cropping.",
+                check.confidence
+            );
+        }
+        Command::WatermarkDetect { input, key_env } => {
+            let key = watermark_key(&key_env)?;
+            let photo = load(&input)?;
+            let d = photo_edit::watermark::detect(&photo.pixels.to_rgb8(), key)?;
+            println!("{}", serde_json::to_string_pretty(&d)?);
+            if d.payload.is_none() {
+                eprintln!(
+                    "No watermark for this passphrase (or it was removed, resized or cropped)."
+                );
+            }
+        }
+        Command::MediaInspect { input } => {
+            let b = read_media(&input)?;
+            let det = photo_media::detect(&b);
+            let ext = input.extension().and_then(|e| e.to_str()).unwrap_or("");
+            if photo_media::detect::extension_mismatch(&det, ext) {
+                eprintln!(
+                    "Warning: the .{ext} extension does not match the detected {} content",
+                    det.container
+                );
+            }
+            let info = photo_media::inspect(&b)?;
+            println!("{}", serde_json::to_string_pretty(&info)?);
+        }
+        Command::StripVideo { input, output } => {
+            let b = read_media(&input)?;
+            let (out, report) = photo_media::mp4::strip(&b)?;
+            save_new(&output, &out)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::AudioAnalyze { input } => {
+            let mut a = photo_media::audio::analyze(&input)?;
+            a.waveform.clear();
+            a.spectrogram.clear();
+            println!("{}", serde_json::to_string_pretty(&a)?);
+        }
+        Command::AudioCompare {
+            original,
+            processed,
+        } => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&photo_media::audio::compare(&original, &processed)?)?
+            );
+        }
+        Command::AudioExport {
+            input,
+            output,
+            mute,
+            bleep,
+        } => {
+            let mut segs = vec![];
+            for (list, kind) in [
+                (&mute, photo_media::audio::RedactKind::Mute),
+                (&bleep, photo_media::audio::RedactKind::Bleep),
+            ] {
+                for r in list {
+                    let (a, b) = r.split_once('-').context("Ranges must look like 12.5-14")?;
+                    segs.push(photo_media::audio::Segment {
+                        start_s: a.trim().parse()?,
+                        end_s: b.trim().parse()?,
+                        kind,
+                    });
+                }
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&photo_media::audio::export_wav(
+                    &input, &output, &segs
+                )?)?
+            );
+        }
+        Command::AudioProtect { input: _ } => anyhow::bail!(
+            "No validated voice-protection model is installed. The audio protection engine refuses to run without one; no file was changed."
+        ),
+        Command::Subtitles { input, redact_to } => {
+            let b = read_media(&input)?;
+            let text = String::from_utf8_lossy(&b);
+            let cues = photo_media::subtitles::parse(&text)?;
+            let found = photo_media::subtitles::scan(&cues, &photo_privacy::Country::ALL);
+            println!("{}", serde_json::to_string_pretty(&found)?);
+            if let Some(out) = redact_to {
+                let flagged: Vec<usize> = found.iter().map(|f| f.cue).collect();
+                let vtt = photo_media::detect(&b).container == "WebVTT";
+                save_new(
+                    &out,
+                    photo_media::subtitles::write(&cues, &flagged, vtt).as_bytes(),
+                )?;
+                eprintln!(
+                    "Wrote redacted subtitles ({} cue(s) replaced)",
+                    flagged
+                        .iter()
+                        .collect::<std::collections::HashSet<_>>()
+                        .len()
+                );
+            }
+        }
+        Command::Profiles { name } => match name {
+            None => {
+                for p in photo_privacy::Profile::all() {
+                    println!("{:<16} {}", p.name, p.description);
+                }
+            }
+            Some(n) => {
+                let p = photo_privacy::Profile::builtin(&n).context("Unknown profile")?;
+                println!("{}", String::from_utf8(p.to_json()?)?);
+            }
+        },
         Command::Protect { input: _ } => anyhow::bail!(
             "No validated defense model adapter is installed. No image was changed. Use export for metadata removal; it does not block AI."
         ),
     }
     Ok(())
+}
+fn watermark_key(var: &str) -> Result<u64> {
+    let p = std::env::var(var)
+        .with_context(|| format!("Set the passphrase in the environment variable {var}"))?;
+    ensure!(
+        p.chars().count() >= 8,
+        "Use a watermark passphrase of at least 8 characters"
+    );
+    Ok(photo_edit::watermark::key_from_passphrase(&p))
+}
+/// Bounded read of a media file (regular files only).
+fn read_media(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let m = std::fs::symlink_metadata(path)?;
+    ensure!(
+        m.is_file() && !m.file_type().is_symlink(),
+        "Input must be a regular file"
+    );
+    ensure!(
+        m.len() <= 2 * 1024 * 1024 * 1024,
+        "File exceeds the 2 GiB inspection limit"
+    );
+    let mut b = vec![];
+    std::fs::File::open(path)?
+        .take(m.len() + 1)
+        .read_to_end(&mut b)?;
+    Ok(b)
 }
 fn export_one(input: &Path, dir: &Path, format: ExportFormat, q: u8) -> Result<PathBuf> {
     let p = load(input)?;

@@ -9,7 +9,7 @@ This is a source-build development preview. No signed installers or verified pub
 | macOS Apple Silicon | aarch64-apple-darwin | CI Apple Silicon target build passed; Mac GUI runtime smoke and notarization pending |
 | Linux x64 | x86_64-unknown-linux-gnu | CI and local builds passed; native preview/export/lab checked; broader desktop coverage pending |
 
-Install the Rust toolchain through rustup. `rust-toolchain.toml` selects the exact version. Windows requires Visual Studio Build Tools with Desktop development with C++; macOS requires Xcode command line tools. Linux requires a C linker, X11 or Wayland desktop libraries, a usable system font and an xdg-desktop-portal backend for rfd dialogs. A headless shell can run the CLI but cannot directly start a graphical window without a desktop display.
+Install the Rust toolchain through rustup. `rust-toolchain.toml` selects the exact version. Windows requires Visual Studio Build Tools with Desktop development with C++; macOS requires Xcode command line tools. Linux requires a C linker, X11 or Wayland desktop libraries, a usable system font, an xdg-desktop-portal backend for rfd dialogs, and ALSA development headers for local audio playback (Debian/Ubuntu: `sudo apt-get install libasound2-dev pkg-config`). A headless shell can run the CLI but cannot directly start a graphical window without a desktop display.
 
 ```sh
 cargo build --locked -p photo-cli

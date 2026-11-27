@@ -4,13 +4,25 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+publish.workspace = true
 
 [dependencies]
-iced = { version = "0.13.1", default-features = false, features = ["tiny-skia", "image-without-codecs", "tokio", "auto-detect-theme"] }
+iced = { version = "0.13.1", default-features = false, features = ["tiny-skia", "image-without-codecs", "tokio", "auto-detect-theme", "lazy", "advanced"] }
 rfd = "0.15"
 tokio = { version = "1", features = ["rt-multi-thread"] }
 image.workspace = true
 photo-core.workspace = true
 photo-lab.workspace = true
+photo-edit.workspace = true
+photo-privacy.workspace = true
+photo-pipeline.workspace = true
+anyhow.workspace = true
+photo-log.workspace = true
+photo-project.workspace = true
+photo-catalog.workspace = true
+photo-media.workspace = true
+# Local audio output only (no decoders: decoding goes through photo-media).
+rodio = { version = "0.19", default-features = false }
+sysinfo = { version = "0.40", default-features = false, features = ["system", "disk"] }
 serde.workspace = true
 serde_json.workspace = true

@@ -1,0 +1,17 @@
+[package]
+name = "photo-edit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Non-destructive geometry, mask, concealment and secure redaction engine"
+
+[dependencies]
+anyhow.workspace = true
+image.workspace = true
+serde.workspace = true
+photo-core.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
