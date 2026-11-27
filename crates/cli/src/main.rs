@@ -194,7 +194,7 @@ enum Command {
     AudioProtect { input: PathBuf },
     /// Transcribe speech locally with Whisper, detect spoken private data, and optionally bleep it.
     #[cfg(feature = "stt")]
-    #[command(name = "audio-transcribe", alias = "udio-transcribe")]
+    #[command(name = "audio-transcribe")]
     AudioTranscribe {
         input: PathBuf,
         /// Local directory containing model.safetensors, config.json, and tokenizer.json.
