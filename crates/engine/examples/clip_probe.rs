@@ -15,7 +15,11 @@ fn main() -> anyhow::Result<()> {
         .take(605157884 + 1)
         .read_to_end(&mut bytes)?;
     anyhow::ensure!(bytes.len() == 605157884, "Unexpected checkpoint size");
-    let hash = format!("{:x}", Sha256::digest(&bytes));
+    use std::fmt::Write as _;
+    let mut hash = String::with_capacity(64);
+    for byte in Sha256::digest(&bytes) {
+        let _ = write!(hash, "{byte:02x}");
+    }
     anyhow::ensure!(
         hash == "99d28a652e6ec46629ab7047a0ac82c69b1fe11e0ce672c43af65d3a9a3fc05d",
         "Unexpected checkpoint hash"

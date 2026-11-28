@@ -5,6 +5,15 @@ use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{io::Read, path::Path};
+pub(crate) fn encode_lower_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
+    }
+    out
+}
+
 pub const MAX_MODEL_BYTES: u64 = 1024 * 1024 * 1024;
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -105,7 +114,7 @@ pub fn verify(path: &Path, manifest: &Manifest) -> Result<VerifiedModel> {
         bytes.len() as u64 == manifest.size_bytes,
         "Model changed or size mismatch"
     );
-    let hash = format!("{:x}", Sha256::digest(&bytes));
+    let hash = encode_lower_hex(&Sha256::digest(&bytes));
     ensure!(
         hash.eq_ignore_ascii_case(&manifest.sha256),
         "Model integrity check failed"
@@ -141,7 +150,7 @@ pub fn verify_onnx(path: &Path, manifest: &Manifest) -> Result<VerifiedModel> {
         bytes.len() as u64 == manifest.size_bytes,
         "Model changed or size mismatch"
     );
-    let hash = format!("{:x}", Sha256::digest(&bytes));
+    let hash = encode_lower_hex(&Sha256::digest(&bytes));
     ensure!(
         hash.eq_ignore_ascii_case(&manifest.sha256),
         "Model integrity check failed"
@@ -208,5 +217,32 @@ mod tests {
                 .to_string()
                 .contains("integrity")
         );
+    }
+
+    #[test]
+    fn sha256_lower_hex_formatting_and_onnx_verification() {
+        assert_eq!(encode_lower_hex(&[0x00, 0x0f, 0xa5, 0xff]), "000fa5ff");
+        assert_eq!(
+            encode_lower_hex(&Sha256::digest(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("model.onnx");
+        std::fs::write(&p, b"abc").unwrap();
+
+        let mut m = manifest();
+        m.filename = "model.onnx".into();
+        m.size_bytes = 3;
+        m.sha256 = "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD".into();
+
+        let verified = verify_onnx(&p, &m).unwrap();
+        assert_eq!(
+            verified.sha256,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+
+        m.sha256 = "0".repeat(64);
+        assert!(verify_onnx(&p, &m).is_err());
     }
 }

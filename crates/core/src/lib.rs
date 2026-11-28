@@ -20,14 +20,19 @@ pub struct Fingerprint {
     pub sha256: String,
     pub blake3: String,
 }
-pub fn fingerprint(bytes: &[u8]) -> Fingerprint {
+/// Formats raw digest or binary bytes as lowercase hexadecimal.
+pub fn encode_lower_hex(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
-    let mut sha256 = String::with_capacity(64);
-    for byte in Sha256::digest(bytes) {
-        let _ = write!(sha256, "{byte:02x}");
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(out, "{byte:02x}");
     }
+    out
+}
+
+pub fn fingerprint(bytes: &[u8]) -> Fingerprint {
     Fingerprint {
-        sha256,
+        sha256: encode_lower_hex(&Sha256::digest(bytes)),
         blake3: blake3::hash(bytes).to_hex().to_string(),
     }
 }
