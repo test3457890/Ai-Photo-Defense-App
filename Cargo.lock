@@ -5202,7 +5202,7 @@ dependencies = [
  "blake3",
  "image 0.25.10",
  "serde",
- "sha2 0.10.9",
+ "sha2 0.11.2",
  "tempfile",
 ]
 
@@ -5250,7 +5250,7 @@ dependencies = [
  "candle-nn",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.2",
 ]
 
 [[package]]
@@ -5309,7 +5309,7 @@ dependencies = [
  "safetensors 0.6.2",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.2",
  "sysinfo",
  "tempfile",
 ]
@@ -5344,7 +5344,7 @@ dependencies = [
  "rxing",
  "serde",
  "serde_json",
- "sha2 0.10.9",
+ "sha2 0.11.2",
  "tempfile",
  "tract-onnx",
 ]
