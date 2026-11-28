@@ -13,7 +13,7 @@ ask-ai = ["dep:serde_json", "dep:sysinfo"]
 anyhow.workspace = true
 serde.workspace = true
 sha2.workspace = true
-safetensors = "0.6"
+safetensors = "0.8"
 serde_json = { workspace = true, optional = true }
 sysinfo = { version = "0.40", default-features = false, features = ["system"], optional = true }
 
