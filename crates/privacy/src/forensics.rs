@@ -186,10 +186,12 @@ pub fn inspect(bytes: &[u8]) -> ForensicReport {
     }
     let fp = |b: &[u8]| {
         use sha2::Digest;
-        (
-            format!("{:x}", sha2::Sha256::digest(b)),
-            blake3::hash(b).to_hex().to_string(),
-        )
+        use std::fmt::Write as _;
+        let mut sha256 = String::with_capacity(64);
+        for byte in sha2::Sha256::digest(b) {
+            let _ = write!(sha256, "{byte:02x}");
+        }
+        (sha256, blake3::hash(b).to_hex().to_string())
     };
     let (sha256, b3) = fp(bytes);
     ForensicReport {
@@ -237,6 +239,14 @@ mod tests {
             inspect(&fake)
                 .c2pa
                 .contains("NOT cryptographically verified")
+        );
+    }
+    #[test]
+    fn forensic_sha256_is_lowercase_hex() {
+        let report = inspect(b"abc");
+        assert_eq!(
+            report.sha256,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
     }
 }

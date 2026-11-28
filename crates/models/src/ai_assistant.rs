@@ -107,7 +107,7 @@ pub fn verify_local_model_file(path: &Path, expected_sha256: &str) -> Result<()>
         }
         hasher.update(&buf[..n]);
     }
-    let got = format!("{:x}", hasher.finalize());
+    let got = crate::encode_lower_hex(&hasher.finalize());
     ensure!(
         got == expected_sha256.to_ascii_lowercase(),
         "SHA-256 mismatch for {}: expected {expected_sha256}, got {got}",
@@ -318,8 +318,10 @@ mod tests {
 
         let gguf = dir.path().join("model.gguf");
         std::fs::write(&gguf, b"gguf-bytes").unwrap();
-        let expected = format!("{:x}", Sha256::digest(b"gguf-bytes"));
+        let expected = crate::encode_lower_hex(&Sha256::digest(b"gguf-bytes"));
+        assert_eq!(expected.len(), 64);
         verify_local_model_file(&gguf, &expected).unwrap();
+        verify_local_model_file(&gguf, &expected.to_ascii_uppercase()).unwrap();
     }
 
     #[test]
