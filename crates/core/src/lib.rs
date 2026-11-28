@@ -21,8 +21,13 @@ pub struct Fingerprint {
     pub blake3: String,
 }
 pub fn fingerprint(bytes: &[u8]) -> Fingerprint {
+    use std::fmt::Write as _;
+    let mut sha256 = String::with_capacity(64);
+    for byte in Sha256::digest(bytes) {
+        let _ = write!(sha256, "{byte:02x}");
+    }
     Fingerprint {
-        sha256: format!("{:x}", Sha256::digest(bytes)),
+        sha256,
         blake3: blake3::hash(bytes).to_hex().to_string(),
     }
 }
